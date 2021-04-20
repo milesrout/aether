@@ -1,0 +1,6 @@
+One-to-one chat:        Double ratchet algorithm between peers
+Group encrypted chat:   ?
+Group unencrypted chat: The list of participants should still be private and the only people able to listen in should be:
+ - the participants (obviously)
+ - the servers of the participants (is this necessary?)
+ - ANY FUTURE PARTICIPANTS (this is really what makes it an 'unencrypted chat')
