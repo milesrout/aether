@@ -3,7 +3,7 @@ ifeq ($(BUILD),release)
 else ifeq ($(BUILD),valgrind)
 	CFLAGS += -Og -g -Werror -DÆTHER_USE_VALGRIND
 else ifeq ($(BUILD),sanitise)
-	CFLAGS += -Og -g -Werror -fsanitize=address -fsanitize=undefined
+	CFLAGS += -Og -g -fsanitize=address -fsanitize=undefined #-Werror 
 	LDFLAGS += -lasan -lubsan
 else ifeq ($(BUILD),gdb)
 	CFLAGS += -O0 -g #-Werror

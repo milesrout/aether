@@ -1,0 +1,76 @@
+#include <sys/random.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#include "util.h"
+#include "monocypher.h"
+
+void
+randbytes(uint8_t *data, size_t size)
+{
+	ssize_t result, ssize = size;
+
+	do result = getrandom(data, size, 0);
+	while (ssize != result);
+}
+
+void
+generate_kex_keypair(uint8_t public_key[32], uint8_t private_key[32])
+{
+	randbytes(private_key, 32);
+	crypto_key_exchange_public_key(public_key, private_key);
+}
+
+void
+generate_sign_keypair(uint8_t public_key[32], uint8_t private_key[32])
+{
+	randbytes(private_key, 32);
+	crypto_sign_public_key(public_key, private_key);
+}
+
+/* BEGIN: these are derived from monocypher directly */
+void
+store32_le(uint8_t out[4], uint32_t in)
+{
+    out[0] = (uint8_t)( in        & 0xff);
+    out[1] = (uint8_t)((in >>  8) & 0xff);
+    out[2] = (uint8_t)((in >> 16) & 0xff);
+    out[3] = (uint8_t)((in >> 24) & 0xff);
+}
+
+uint32_t
+load32_le(const uint8_t s[4])
+{
+    return (uint32_t)s[0]
+        | ((uint32_t)s[1] <<  8)
+        | ((uint32_t)s[2] << 16)
+        | ((uint32_t)s[3] << 24);
+}
+/* END: these are derived from monocypher directly */
+
+int
+check_key(const uint8_t isk[32], const char name[4], const uint8_t key[32], const uint8_t sig[64])
+{
+	uint8_t msg[36] = { 0 };
+	int result;
+
+	memcpy(msg, name, 4);
+	memcpy(msg + 4, key, 32);
+	result = crypto_check(sig, isk, msg, 36);
+	crypto_wipe(msg, 36);
+
+	return result;
+}
+
+void
+sign_key(uint8_t sig[64],
+	const uint8_t isk_prv[32], const uint8_t isk[32],
+	const char name[4], const uint8_t key[32])
+{
+	uint8_t msg[36] = { 0 };
+
+	memcpy(msg, name, 4);
+	memcpy(msg + 4, key, 32);
+	crypto_sign(sig, isk_prv, isk, msg, 36);
+	crypto_wipe(msg, 36);
+}
