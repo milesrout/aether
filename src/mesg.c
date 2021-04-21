@@ -37,8 +37,8 @@ static void dh_ratchet(uint8_t rk[32], uint8_t ckn[32], uint8_t nhk[32], uint8_t
 
 static int try_decrypt_header(const struct mesg_ratchet_state *state, uint8_t hk[32], struct mesghdr *hdr);
 static int try_skipped_message_keys(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size);
-static void skip_message_keys(struct mesg_ratchet_state *state, uint32_t until);
-static void skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until);
+static int skip_message_keys(struct mesg_ratchet_state *state, uint32_t until);
+static int skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until);
 static int decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size, const uint8_t *ad);
 static int try_decrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size);
 static void encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size);
@@ -237,31 +237,30 @@ mesgkey_create(struct mesg_ratchet_state *state)
 }
 
 static
-void
+int
 skip_message_keys(struct mesg_ratchet_state *state, uint32_t until)
 {
 	if (MAX_SKIP == 0)
-		return;
+		return -1;
 
-	if (until >= (MAX_SKIP + 1) && state->nr >= until - (MAX_SKIP + 1)) {
-		/* TODO: error handling */
-		fprintf(stderr, "Too many messages to skip. Abort.\n");
-		exit(EXIT_FAILURE);
-	}
+	if (until >= (MAX_SKIP + 1) && state->nr >= until - (MAX_SKIP + 1))
+		return -1;
 
-	if (!crypto_verify32(state->ckr, missing_key) || state->nr >= until) {
-		return;
-	}
+	if (!crypto_verify32(state->ckr, missing_key) || state->nr >= until)
+		return 0;
 
-	skip_message_keys_helper(state, until);
+	return skip_message_keys_helper(state, until);
 }
 
 static
-void
+int
 skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
 {
 	struct mesgkey *prev_mesgkey = NULL;
 	struct mesgkey_bucket *bucket = bucket_create(state);
+
+	if (bucket == NULL)
+		return -1;
 
 	memcpy(bucket->hk, state->hkr, 32);
 	bucket->next = state->skipped;
@@ -269,6 +268,9 @@ skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
 
 	while (state->nr < until) {
 		struct mesgkey *mesgkey = mesgkey_create(state);
+
+		if (mesgkey == NULL)
+			return -1;
 
 		if (prev_mesgkey == NULL)
 			bucket->first = mesgkey;
@@ -282,6 +284,8 @@ skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
 
 		state->nr++;
 	}
+
+	return 0;
 }
 
 static
@@ -316,18 +320,18 @@ try_decrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t 
 	uint8_t mk[32];
 	int result;
 
-	if (!try_skipped_message_keys(state, mesg, mesg_size)) {
+	if (!try_skipped_message_keys(state, mesg, mesg_size))
 		return 0;
-	}
 
 	if (try_decrypt_header(state, state->hkr, &mesg->hdr)) {
-		if (try_decrypt_header(state, state->nhkr, &mesg->hdr)) {
+		if (try_decrypt_header(state, state->nhkr, &mesg->hdr))
 			return -1;
-		}
-		skip_message_keys(state, load32_le(mesg->hdr.pn));
+		if (skip_message_keys(state, load32_le(mesg->hdr.pn)))
+			return -1;
 		step_receiver_ratchet(state, &mesg->hdr);
 	}
-	skip_message_keys(state, load32_le(mesg->hdr.msn));
+	if (skip_message_keys(state, load32_le(mesg->hdr.msn)))
+		return -1;
 
 	symm_ratchet(mk, state->ckr);
 	state->nr++;
@@ -498,107 +502,107 @@ struct hshake_hello_msg {
 	uint8_t ekc_sig[64]; /* signature of ekc by iskc */
 };
 
-/* this message is sent assuming that the client knows isks, the server's
+/* this message is sent assuming that the client knows iskd, the server's
  * long-term key-signing (identity) key.
  */
 struct hshake_reply_msg {
 	uint8_t iks[32];     /* server's long-term key-exchange (identity) key */
 	uint8_t eks[32];     /* server's ephemeral key-exchange key */
-	uint8_t iks_sig[64]; /* signature of iks by isks */
-	uint8_t eks_sig[64]; /* signature of eks by isks */
-	uint8_t cvc_sig[64]; /* signature of cvc by isks */
+	uint8_t iks_sig[64]; /* signature of iks by iskd */
+	uint8_t eks_sig[64]; /* signature of eks by iskd */
+	uint8_t cvc_sig[64]; /* signature of cvc by iskd */
 	uint8_t cvs[32];     /* server's challenge value */
 };
 
 void
-mesg_hshaked_prepare(struct mesg_state *state,
-		const uint8_t isks[32], const uint8_t isks_prv[32],
+mesg_hshake_dprepare(struct mesg_state *state,
+		const uint8_t iskd[32], const uint8_t iskd_prv[32],
 		const uint8_t iks[32], const uint8_t iks_prv[32])
 {
-	struct mesg_hshake_state_server *hss = &state->u.hss;
+	struct mesg_hshake_dstate *hsd = &state->u.hsd;
 
 	crypto_wipe(state, sizeof *state);
 
-	memcpy(hss->isks,    isks,     32);
-	memcpy(hss->isks_prv,isks_prv, 32);
-	memcpy(hss->iks,     iks,      32);
-	memcpy(hss->iks_prv, iks_prv,  32);
-	generate_kex_keypair(hss->eks, hss->eks_prv);
-	randbytes(hss->cvs, 32);
+	memcpy(hsd->iskd,    iskd,     32);
+	memcpy(hsd->iskd_prv,iskd_prv, 32);
+	memcpy(hsd->ikd,     iks,      32);
+	memcpy(hsd->ikd_prv, iks_prv,  32);
+	generate_kex_keypair(hsd->ekd, hsd->ekd_prv);
+	randbytes(hsd->cvd, 32);
 }
 
 void
-mesg_hshake_prepare(struct mesg_state *state, const uint8_t isks[32],
+mesg_hshake_cprepare(struct mesg_state *state, const uint8_t iskd[32],
 		const uint8_t iskc[32], const uint8_t iskc_prv[32],
 		const uint8_t ikc[32], const uint8_t ikc_prv[32])
 {
-	struct mesg_hshake_state_client *hs = &state->u.hs;
+	struct mesg_hshake_cstate *hsc = &state->u.hsc;
 
 	crypto_wipe(state, sizeof *state);
 
-	memcpy(hs->isks,    isks,     32);
-	memcpy(hs->iskc,    iskc,     32);
-	memcpy(hs->iskc_prv,iskc_prv, 32);
-	memcpy(hs->ikc,     ikc,      32);
-	memcpy(hs->ikc_prv, ikc_prv,  32);
-	generate_kex_keypair(hs->ekc, hs->ekc_prv);
-	randbytes(hs->cvc, 32);
+	memcpy(hsc->iskd,    iskd,     32);
+	memcpy(hsc->iskc,    iskc,     32);
+	memcpy(hsc->iskc_prv,iskc_prv, 32);
+	memcpy(hsc->ikc,     ikc,      32);
+	memcpy(hsc->ikc_prv, ikc_prv,  32);
+	generate_kex_keypair(hsc->ekc, hsc->ekc_prv);
+	randbytes(hsc->cvc, 32);
 }
 
 void
-mesg_hshake_hello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
+mesg_hshake_chello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
 {
-	struct mesg_hshake_state_client *hs = &state->u.hs;
+	struct mesg_hshake_cstate *hsc = &state->u.hsc;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
 
-	memcpy(hellomsg->iskc, hs->iskc, 32);
-	memcpy(hellomsg->ikc,  hs->ikc,  32);
-	memcpy(hellomsg->ekc,  hs->ekc,  32);
-	memcpy(hellomsg->cvc,  hs->cvc,  32);
-	sign_key(hellomsg->ikc_sig, hs->iskc_prv, hs->iskc, "AECI", hs->ikc);
-	sign_key(hellomsg->ekc_sig, hs->iskc_prv, hs->iskc, "AECE", hs->ekc);
+	memcpy(hellomsg->iskc, hsc->iskc, 32);
+	memcpy(hellomsg->ikc,  hsc->ikc,  32);
+	memcpy(hellomsg->ekc,  hsc->ekc,  32);
+	memcpy(hellomsg->cvc,  hsc->cvc,  32);
+	sign_key(hellomsg->ikc_sig, hsc->iskc_prv, hsc->iskc, "AHCI", hsc->ikc);
+	sign_key(hellomsg->ekc_sig, hsc->iskc_prv, hsc->iskc, "AHCE", hsc->ekc);
 }
 
 int
-mesg_hshaked_check(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
+mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
 {
-	struct mesg_hshake_state_server *hss = &state->u.hss;
+	struct mesg_hshake_dstate *hsd = &state->u.hsd;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
 
-	if (check_key(hellomsg->iskc, "AECI", hellomsg->ikc, hellomsg->ikc_sig))
+	if (check_key(hellomsg->iskc, "AHCI", hellomsg->ikc, hellomsg->ikc_sig))
 		return -1;
-	if (check_key(hellomsg->iskc, "AECE", hellomsg->ekc, hellomsg->ekc_sig))
+	if (check_key(hellomsg->iskc, "AHCE", hellomsg->ekc, hellomsg->ekc_sig))
 		return -1;
-	memcpy(hss->cvc, hellomsg->cvc, 32);
-	memcpy(hss->ikc, hellomsg->ikc, 32);
-	memcpy(hss->ekc, hellomsg->ekc, 32);
+	memcpy(hsd->cvc, hellomsg->cvc, 32);
+	memcpy(hsd->ikc, hellomsg->ikc, 32);
+	memcpy(hsd->ekc, hellomsg->ekc, 32);
 
 	return 0;
 }
 
 void
-mesg_hshaked_reply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
+mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 {
-	struct mesg_hshake_state_server *hss = &state->u.hss;
+	struct mesg_hshake_dstate *hsd = &state->u.hsd;
 	struct mesg_ratchet_state *ra = &state->u.ra;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh[128];
 	uint8_t ikc[32], eks_prv[32];
 
-	memcpy(replymsg->iks, hss->iks, 32);
-	memcpy(replymsg->eks, hss->eks, 32);
-	sign_key(replymsg->iks_sig, hss->isks_prv, hss->isks, "AESI", hss->iks);
-	sign_key(replymsg->eks_sig, hss->isks_prv, hss->isks, "AESE", hss->eks);
-	sign_key(replymsg->cvc_sig, hss->isks_prv, hss->isks, "AESC", hss->cvc);
-	memcpy(replymsg->cvs, hss->cvs, 32);
+	memcpy(replymsg->iks, hsd->ikd, 32);
+	memcpy(replymsg->eks, hsd->ekd, 32);
+	sign_key(replymsg->iks_sig, hsd->iskd_prv, hsd->iskd, "AHDI", hsd->ikd);
+	sign_key(replymsg->eks_sig, hsd->iskd_prv, hsd->iskd, "AHDE", hsd->ekd);
+	sign_key(replymsg->cvc_sig, hsd->iskd_prv, hsd->iskd, "AHDC", hsd->cvc);
+	memcpy(replymsg->cvs, hsd->cvd, 32);
 
-	crypto_key_exchange(dh,      hss->iks_prv, hss->ikc);
-	crypto_key_exchange(dh + 32, hss->iks_prv, hss->ekc);
-	crypto_key_exchange(dh + 64, hss->eks_prv, hss->ikc);
-	crypto_key_exchange(dh + 96, hss->eks_prv, hss->ekc);
+	crypto_key_exchange(dh,      hsd->ikd_prv, hsd->ikc);
+	crypto_key_exchange(dh + 32, hsd->ikd_prv, hsd->ekc);
+	crypto_key_exchange(dh + 64, hsd->ekd_prv, hsd->ikc);
+	crypto_key_exchange(dh + 96, hsd->ekd_prv, hsd->ekc);
 
-	memcpy(ikc,     hss->ikc,     32);
-	memcpy(eks_prv, hss->eks_prv, 32);
+	memcpy(ikc,     hsd->ikc,     32);
+	memcpy(eks_prv, hsd->ekd_prv, 32);
 
 	/* switch from hshake state to ratchet state */
 	crypto_wipe(state, sizeof(struct mesg_state));
@@ -616,9 +620,9 @@ mesg_hshaked_reply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 }
 
 int
-mesg_hshake_finish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
+mesg_hshake_cfinish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 {
-	struct mesg_hshake_state_client *hs = &state->u.hs;
+	struct mesg_hshake_cstate *hsc = &state->u.hsc;
 	struct mesg_ratchet_state *ra = &state->u.ra;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh_hs[128];
@@ -626,19 +630,19 @@ mesg_hshake_finish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 	uint8_t ikc[32];
 	int result = -1;
 
-	if (check_key(hs->isks, "AESI", replymsg->iks, replymsg->iks_sig))
+	if (check_key(hsc->iskd, "AHDI", replymsg->iks, replymsg->iks_sig))
 		goto end;
-	if (check_key(hs->isks, "AESE", replymsg->eks, replymsg->eks_sig))
+	if (check_key(hsc->iskd, "AHDE", replymsg->eks, replymsg->eks_sig))
 		goto end;
-	if (check_key(hs->isks, "AESC", hs->cvc,       replymsg->cvc_sig))
+	if (check_key(hsc->iskd, "AHDC", hsc->cvc,       replymsg->cvc_sig))
 		goto end;
 
-	crypto_key_exchange(dh_hs,      hs->ikc_prv, replymsg->iks);
-	crypto_key_exchange(dh_hs + 32, hs->ekc_prv, replymsg->iks);
-	crypto_key_exchange(dh_hs + 64, hs->ikc_prv, replymsg->eks);
-	crypto_key_exchange(dh_hs + 96, hs->ekc_prv, replymsg->eks);
+	crypto_key_exchange(dh_hs,      hsc->ikc_prv, replymsg->iks);
+	crypto_key_exchange(dh_hs + 32, hsc->ekc_prv, replymsg->iks);
+	crypto_key_exchange(dh_hs + 64, hsc->ikc_prv, replymsg->eks);
+	crypto_key_exchange(dh_hs + 96, hsc->ekc_prv, replymsg->eks);
 
-	memcpy(ikc, hs->ikc, 32);
+	memcpy(ikc, hsc->ikc, 32);
 
 	/* switch from hshake state to ratchet state */
 	crypto_wipe(state, sizeof(struct mesg_state));
@@ -682,13 +686,13 @@ mesg_example1(int fd)
 		uint8_t buf[MESG_HSHAKE_SIZE];
 
 		/* Prepare the message state for the first handshake message */
-		mesg_hshake_prepare(&state,
+		mesg_hshake_cprepare(&state,
 			server_sign_public_key,
 			sign_public_key, sign_private_key,
 			kex_public_key, kex_private_key);
 
 		/* Create the hello message and update state */
-		mesg_hshake_hello(&state, buf);
+		mesg_hshake_chello(&state, buf);
 
 		/* Write the hello message out to a socket */
 		write(fd, buf, MESG_HELLO_SIZE);
@@ -700,7 +704,7 @@ mesg_example1(int fd)
 		read(fd, buf, MESG_REPLY_SIZE);
 
 		/* Check the handshake reply's integrity and update state */
-		if (mesg_hshake_finish(&state, buf))
+		if (mesg_hshake_cfinish(&state, buf))
 			return -1;
 		
 		/* Wipe the reply message now it has been checked */
@@ -722,7 +726,7 @@ mesg_example2(int fd)
 	generate_kex_keypair(kex_public_key, kex_private_key);
 
 	/* Prepare the message state as an online handshake replier */
-	mesg_hshaked_prepare(&state,
+	mesg_hshake_dprepare(&state,
 		sign_public_key, sign_private_key,
 		kex_public_key, kex_private_key);
 
@@ -733,14 +737,14 @@ mesg_example2(int fd)
 		read(fd, buf, MESG_HELLO_SIZE);
 
 		/* Check the handshake hello and update state */
-		if (mesg_hshaked_check(&state, buf))
+		if (mesg_hshake_dcheck(&state, buf))
 			return -1;
 
 		/* Wipe the hello message now it has been checked */
 		crypto_wipe(buf, MESG_HELLO_SIZE);
 
 		/* Create the reply message and update state */
-		mesg_hshaked_reply(&state, buf);
+		mesg_hshake_dreply(&state, buf);
 
 		/* Write the reply message out to the socket */
 		write(fd, buf, MESG_REPLY_SIZE);

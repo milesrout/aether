@@ -78,8 +78,6 @@ struct ra_init_msg {
 	uint8_t ikc[32];     /* client's identity key */
 };
 
-static const uint8_t pp_hs_info[]   = "AetherwindPeerToPeerHandshake";
-
 union mesgbuf {
 	uint8_t buf[65536];
 	struct mesg mesg;
@@ -106,8 +104,8 @@ client(const char *addr, const char *port)
 	{
 		uint8_t buf[MESG_HSHAKE_SIZE + 1];
 
-		mesg_hshake_prepare(&state, isks, iskc, iskc_prv, ikc, ikc_prv);
-		mesg_hshake_hello(&state, buf);
+		mesg_hshake_cprepare(&state, isks, iskc, iskc_prv, ikc, ikc_prv);
+		mesg_hshake_chello(&state, buf);
 		safe_write(fd, buf, MESG_HELLO_SIZE);
 		crypto_wipe(buf, MESG_HELLO_SIZE);
 
@@ -118,7 +116,7 @@ client(const char *addr, const char *port)
 			return -1;
 		}
 
-		if (mesg_hshake_finish(&state, buf)) {
+		if (mesg_hshake_cfinish(&state, buf)) {
 			crypto_wipe(buf, MESG_REPLY_SIZE);
 			return -1;
 		}
@@ -164,29 +162,34 @@ client(const char *addr, const char *port)
 
 	{
 		uint8_t buf[65536];
-		ssize_t nread;
+		ssize_t nread = safe_read(fd, buf, 65536);
 
-		while (MESG_BUF_SIZE(0) < (nread = safe_read(fd, buf, 65536))) {
+		while (nread != -1 && (size_t)nread > MESG_BUF_SIZE(0)) {
 			if (mesg_unlock(&state, buf, nread)) {
 				break;
 			}
-			/*displaykey("received from server", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));*/
+
 			if (FLAG_TESTING_ONLY) {
 				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) + 1);
 				safe_write(fd, buf, nread + 1);
-				fprintf(stderr, "sent %lu-byte message\n", nread + 1);
+				fprintf(stderr, "sent %ld-byte message\n", nread + 1);
 			} else {
 				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - 1);
 				safe_write(fd, buf, nread - 1);
-				fprintf(stderr, "sent %lu-byte message\n", nread - 1);
+				fprintf(stderr, "sent %ld-byte message\n", nread - 1);
 			}
+
 			if (nread < 100) {
 				FLAG_TESTING_ONLY = 1;
 			}
+
 			if (nread > 400) {
 				FLAG_TESTING_ONLY = 0;
 			}
+
 			crypto_wipe(buf, 65536);
+
+			nread = safe_read(fd, buf, 65536);
 		}
 	}
 
@@ -354,7 +357,6 @@ serve(const char *addr, const char *port)
 	ssize_t nread;
 	uint8_t buf[65536];
 	uint8_t iks[32], iks_prv[32];
-	uint8_t ikc[32];
 	struct mesg_state state;
 
 	generate_kex_keypair(iks, iks_prv);
@@ -412,21 +414,21 @@ serve(const char *addr, const char *port)
 			 * - any other relevant factors
 			 */
 
-			mesg_hshaked_prepare(&state,
+			mesg_hshake_dprepare(&state,
 				isks, isks_prv, iks, iks_prv);
 
-			if (mesg_hshaked_check(&state, buf)) {
+			if (mesg_hshake_dcheck(&state, buf)) {
 				crypto_wipe(buf, MESG_HELLO_SIZE);
 				continue;
 			}
 			crypto_wipe(buf, MESG_HELLO_SIZE);
 
-			mesg_hshaked_reply(&state, buf);
+			mesg_hshake_dreply(&state, buf);
 
 			safe_sendto(fd, buf, MESG_REPLY_SIZE,
 				(struct sockaddr *)&peeraddr, peeraddr_len);
 			crypto_wipe(buf, MESG_REPLY_SIZE);
-		} else if (nread > MESG_BUF_SIZE(0)) {
+		} else if (nread != -1 && (size_t)nread > MESG_BUF_SIZE(0)) {
 			if (mesg_unlock(&state, buf, nread)) {
 				fprintf(stderr, "Couldn't decrypt message with size=%ld (text_size=%lu)\n",
 					nread, MESG_TEXT_SIZE(nread));
@@ -451,7 +453,7 @@ static
 void
 usage(const char *prog)
 {
-	fprintf(stderr, "usage: %s HOST PORT (s[erve] | a[lice] | b[ob])\n", prog);
+	fprintf(stderr, "usage: %s HOST PORT (c[lient] | d[aemon))\n", prog);
 	exit(EXIT_FAILURE);
 }
 
@@ -467,8 +469,8 @@ main(int argc, char **argv)
 	port = argv[2];
 
 	switch (argv[3][0]) {
-		case 's': serve(host, port); break;
 		case 'c': client(host, port); break;
+		case 'd': serve(host, port); break;
 		default:  usage(argv[0]);
 	}
 

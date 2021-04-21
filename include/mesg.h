@@ -10,8 +10,8 @@ struct mesg {
 	struct mesghdr hdr;
 	uint8_t text[];
 };
-struct mesg_hshake_state_client {
-	uint8_t isks[32];        /* server public identity (signing) key */
+struct mesg_hshake_cstate {
+	uint8_t iskd[32];        /* daemon public identity (signing) key */
 	uint8_t iskc[32];        /* client public identity (signing) key */
 	uint8_t iskc_prv[32];    /* client private identity (signing) key */
 	uint8_t ikc[32];         /* client public identity (key-xchg) key */
@@ -20,16 +20,16 @@ struct mesg_hshake_state_client {
 	uint8_t ekc_prv[32];     /* client private ephemeral (key-xchg) key */
 	uint8_t cvc[32];         /* challenge value from client */
 };
-struct mesg_hshake_state_server {
-	uint8_t isks[32];        /* server public identity (signing) key */
-	uint8_t isks_prv[32];    /* server private identity (signing) key */
-	uint8_t iks[32];         /* server public identity (key-xchg) key */
-	uint8_t iks_prv[32];     /* server private identity (key-xchg) key */
-	uint8_t eks[32];         /* server public ephemeral (key-xchg) key */
-	uint8_t eks_prv[32];     /* server private ephemeral (key-xchg) key */
+struct mesg_hshake_dstate {
+	uint8_t iskd[32];        /* daemon public identity (signing) key */
+	uint8_t iskd_prv[32];    /* daemon private identity (signing) key */
+	uint8_t ikd[32];         /* daemon public identity (key-xchg) key */
+	uint8_t ikd_prv[32];     /* daemon private identity (key-xchg) key */
+	uint8_t ekd[32];         /* daemon public ephemeral (key-xchg) key */
+	uint8_t ekd_prv[32];     /* daemon private ephemeral (key-xchg) key */
 	uint8_t ikc[32];         /* client public identity (key-xchg) key */
 	uint8_t ekc[32];         /* client public ephemeral (key-xchg) key */
-	uint8_t cvs[32];         /* challenge value from server */
+	uint8_t cvd[32];         /* challenge value from daemon */
 	uint8_t cvc[32];         /* challenge value from client */
 };
 struct mesg_ratchet_state {
@@ -54,27 +54,28 @@ struct mesg_ratchet_state {
 };                                             /* them.  we DO need to wipe!  */
 struct mesg_state {
 	union {
-		struct mesg_hshake_state_client hs; /* TODO: rename hs => hsc */
-		struct mesg_hshake_state_server hss;
+		struct mesg_hshake_cstate hsc;
+		struct mesg_hshake_dstate hsd;
 		struct mesg_ratchet_state ra;
 	} u;
 };
 extern int mesg_example1(int fd);
+extern int mesg_example2(int fd);
 #define MESG_HELLO_SIZE 256
 #define MESG_REPLY_SIZE 288
 /* MESG_HSHAKE_SIZE = MAX( MESG_{HELLO,REPLY}_SIZE ) */
 #define MESG_HSHAKE_SIZE 288
-extern void mesg_hshake_prepare(struct mesg_state *state,
+extern void mesg_hshake_cprepare(struct mesg_state *state,
 	const uint8_t his_sign_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
-extern void mesg_hshake_hello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE]);
-extern int mesg_hshake_finish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE]);
-extern void mesg_hshaked_prepare(struct mesg_state *state,
+extern void mesg_hshake_chello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE]);
+extern int mesg_hshake_cfinish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE]);
+extern void mesg_hshake_dprepare(struct mesg_state *state,
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
-extern int mesg_hshaked_check(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE]);
-extern void mesg_hshaked_reply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE]);
+extern int mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE]);
+extern void mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE]);
 #define MESG_BUF_SIZE(size) ((size) + sizeof(struct mesg))
 #define MESG_TEXT_SIZE(size) ((size) - sizeof(struct mesg))
 #define MESG_TEXT(buf) ((buf) + offsetof(struct mesg, text))

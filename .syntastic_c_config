@@ -2,8 +2,6 @@
 -g
 -D_GNU_SOURCE
 -I./include
--MMD
--MP
 -std=c99
 -fPIE
 -ftrapv
@@ -11,7 +9,6 @@
 -pedantic
 -pedantic-errors
 -Wno-overlength-strings
--fmax-errors=2
 -Wall
 -Wextra
 -Wdouble-promotion
