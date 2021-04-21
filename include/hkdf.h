@@ -27,6 +27,10 @@
  *
  * hkdf_blake2b wipes its own internal buffers, but not the salt or info.
  * crypto_wipe is your friend. :)
+ *
+ * Additionally supports the user storing info in the buffer immediately after
+ * derived_key i.e info == derived_key + derived_key_size.  If that is the case,
+ * info WILL be wiped and will not need to be memcpy'd.
  */
 extern void hkdf_blake2b(uint8_t *derived_key, size_t derived_key_size,
 		const uint8_t *salt, size_t salt_size,

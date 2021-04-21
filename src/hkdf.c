@@ -25,23 +25,25 @@ hkdf_blake2b(uint8_t *derived_key,   size_t derived_key_size,
 		const uint8_t *ikm,  size_t ikm_size)
 {
 	uint8_t prk[64];
-	uint8_t *dkptr;
+	uint8_t *after, *dkptr;
 
 	/* HKDF-Extract */
 	crypto_blake2b_general(prk, 64, salt, salt_size, ikm, ikm_size);
 
 	/* HKDF-Expand */
-	memcpy(derived_key + derived_key_size, info, info_size);
-	derived_key[derived_key_size + info_size] = 0;
+	after = derived_key + derived_key_size;
+	if (info != after)
+		memcpy(after, info, info_size);
+	after[info_size] = 0;
 
-	for (dkptr = derived_key + derived_key_size; dkptr > derived_key; dkptr -= 32) {
+	for (dkptr = after; dkptr > derived_key; dkptr -= 32) {
 		/* wrapping overflow of uint8_t is intended */
-		derived_key[derived_key_size + info_size]++;
+		after[info_size]++;
 		/* message_size arg is (iterations * 32) + info_size + 1 */
 		crypto_blake2b_general(dkptr - 32, 32, prk, 64, dkptr,
 			derived_key_size - (dkptr - derived_key) + info_size + 1);
 	}
 
-	crypto_wipe(derived_key + derived_key_size, info_size + 1);
+	crypto_wipe(after, info_size + 1);
 	crypto_wipe(prk, 64);
 }
