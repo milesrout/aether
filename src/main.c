@@ -57,16 +57,15 @@ static
 void
 printhexbytes(const uint8_t *data, size_t size)
 {
-	while (size--) {
+	while (size--)
 		fprintf(stderr, "%02x", *data++);
-	}
 }
 
 static
 void
 displaykey(const char *name, const uint8_t *key, size_t size)
 {
-	printf("%s:\n", name);
+	/*printf("%s:\n", name);*/
 	printhexbytes(key, size);
 	putchar('\n');
 }
@@ -90,7 +89,8 @@ client(const char *addr, const char *port)
 	/* TODO: discover through DNS or HTTPS or something */
 	/* uint8_t isks[32]; */
 	int fd;
-	int FLAG_TESTING_ONLY = 0;
+	int FLAG_TESTING_ONLY_1 = 0;
+	int FLAG_TESTING_ONLY_2 = 0;
 	ssize_t nread;
 	uint8_t iskc[32], iskc_prv[32];
 	uint8_t ikc[32], ikc_prv[32];
@@ -144,7 +144,7 @@ client(const char *addr, const char *port)
 		crypto_wipe(buf3, MESG_BUF_SIZE(1024));
 		fprintf(stderr, "sent 1024-byte message\n");
 
-		/*safe_write(fd, buf2, MESG_BUF_SIZE(128));*/
+		safe_write(fd, buf2, MESG_BUF_SIZE(128));
 		crypto_wipe(buf2, MESG_BUF_SIZE(128));
 		fprintf(stderr, "sent 128-byte message\n");
 
@@ -163,28 +163,36 @@ client(const char *addr, const char *port)
 	{
 		uint8_t buf[65536];
 		ssize_t nread = safe_read(fd, buf, 65536);
+		int which = 0;
 
 		while (nread != -1 && (size_t)nread > MESG_BUF_SIZE(0)) {
+			which = which ? 0 : 1;
 			if (mesg_unlock(&state, buf, nread)) {
 				break;
 			}
 
-			if (FLAG_TESTING_ONLY) {
-				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) + 1);
-				safe_write(fd, buf, nread + 1);
-				fprintf(stderr, "sent %ld-byte message\n", nread + 1);
+			if (which ? FLAG_TESTING_ONLY_1 : FLAG_TESTING_ONLY_2) {
+				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) + (which ? 1 : 2));
+				safe_write(fd, buf, nread + (which ? 1 : 2));
+				fprintf(stderr, "sent %ld-byte message\n", nread + (which ? 1 : 2));
 			} else {
-				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - 1);
-				safe_write(fd, buf, nread - 1);
-				fprintf(stderr, "sent %ld-byte message\n", nread - 1);
+				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - (which ? 1 : 2));
+				safe_write(fd, buf, nread - (which ? 1 : 2));
+				fprintf(stderr, "sent %ld-byte message\n", nread - (which ? 1 : 2));
 			}
 
-			if (nread < 100) {
-				FLAG_TESTING_ONLY = 1;
+			if (nread < 101) {
+				if (which)
+					FLAG_TESTING_ONLY_1 = 1;
+				else
+					FLAG_TESTING_ONLY_2 = 1;
 			}
 
-			if (nread > 400) {
-				FLAG_TESTING_ONLY = 0;
+			if (nread > 199) {
+				if (which)
+					FLAG_TESTING_ONLY_1 = 0;
+				else
+					FLAG_TESTING_ONLY_2 = 0;
 			}
 
 			crypto_wipe(buf, 65536);
@@ -395,7 +403,7 @@ serve(const char *addr, const char *port)
 		nread = safe_recvfrom(fd, buf, 65536,
 			&peeraddr, &peeraddr_len);
 
-		fprintf(stderr, "Received %zd bytes.\n", nread);
+		/*fprintf(stderr, "Received %zd bytes.\n", nread);*/
 		if (FLAG_TESTING_ONLY == 0 && nread == MESG_HELLO_SIZE) {
 			FLAG_TESTING_ONLY = 1;
 			/* TODO: Proof of work - to prevent denial of service:
@@ -436,7 +444,7 @@ serve(const char *addr, const char *port)
 			}
 			/*fprintf(stderr, "Decrypted message with size=%ld (text_size=%lu)\n",
 				nread, MESG_TEXT_SIZE(nread));*/
-			/*displaykey("plain", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));*/
+			displaykey("plain", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));
 
 			mesg_lock(&state, buf, MESG_TEXT_SIZE(nread));
 			safe_sendto(fd, buf, nread,
