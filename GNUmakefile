@@ -12,7 +12,7 @@ else
 	CFLAGS += -Og -g #-Werror
 endif
 
-TARGET    := æther
+TARGET    := aether
 
 #PC_DEPS   :=
 #CFLAGS    += $(shell pkg-config --cflags $(PC_DEPS))

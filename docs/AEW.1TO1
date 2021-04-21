@@ -1,0 +1,12 @@
+<!-- vim: set ft=markdown: -->
+
+AEW.1TO1: The 1-to-1 portion of the AEW protocol is used to establish
+confidentiality and authenticity of messages from one device to another.  This
+includes communication between the devices of a single user.
+
+AEW.1TO1 fits into AEW as described in the overall description of AEW in
+docs/AEW.
+
+---
+
+AEW.1TO1 is a double-ratchet algorithm.  

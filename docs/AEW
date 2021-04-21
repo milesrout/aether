@@ -1,14 +1,14 @@
 <!-- vim: set ft=markdown: -->
 
-ÆW: The Ætherwind protocol and how its parts fit together.
+AEW: The Ætherwind protocol and how its parts fit together.
 
 ## Purpose of this document
 
 There are a number of different components to the Ætherwind protocol:
 
- - ÆW.1TO1: communication between devices
- - ÆW.WRAP: message wrapping
- - ÆW.
+ - AEW.1TO1: communication between devices
+ - AEW.WRAP: message wrapping
+ - AEW.
 
 This document describes how these pieces fit together without going into too
 much detail about how each piece works internally.  Each component is described
@@ -16,19 +16,19 @@ in detail in its own document.
 
 ## Fundamental concepts
 
-Ætherwind (ÆW) is a federated end-to-end-encrypted chat protocol.
+Ætherwind (AEW) is a federated end-to-end-encrypted chat protocol.
 
-Federation means that ÆW does not rely on a single server or server operator
+Federation means that AEW does not rely on a single server or server operator
 but a network of servers operated by different parties that are not required to
-trust each other.  However, federation does not mean that ÆW is a peer-to-peer
+trust each other.  However, federation does not mean that AEW is a peer-to-peer
 protocol like BitTorrent. It is still a client-server protocol, in which client
 identity is tied to their "home" server.
 
-End-to-end encryption (E2EE) in the case of ÆW means that if Alice
+End-to-end encryption (E2EE) in the case of AEW means that if Alice
 <example.net:~alice> sends Bob <example.org:~bob> a message, and Bob receives
 and verifies the authenticity of that message, then that message is guaranteed
 to have been sent by Alice (authenticity) and nobody other than Bob and Alice
-can read it, as long as Alice and Bob's devices have not been compromised.  ÆW
+can read it, as long as Alice and Bob's devices have not been compromised.  AEW
 uses a variant of the Double Ratchet algorithm to obtain these security
 properties.
 
@@ -43,10 +43,10 @@ servers can't listen in on or forge messages to or from their users), an
 uncooperative, malicious or buggy server can delay or block message delivery,
 may ban users and may block users or blanket block users from entire servers.
 
-Example: æwind.net
+Example: aewind.net
 Equivalent elsewhere: a matrix server, an email server, a web host
 
-User:  A user is ÆW's conception of a particular identity of a person.
+User:  A user is AEW's conception of a particular identity of a person.
 It is assumed that a person may have more than one identity.  For example, a
 person might have a personal identity (Bruce <example.net:~bruce>), a work
 identity (Bruce <example.com:~bruce>) and a secret identity (Batman
@@ -55,14 +55,14 @@ support multiple identities in a secure way that cannot be used by third
 parties to tie the identities together.  Every user is tied to a particular
 server.  However, identities may also be tied together by a user intentionally.
 For example, a person may do so as part of a process to transfer their identity
-from one server to another.  In the description of ÆW, identity and user are
+from one server to another.  In the description of AEW, identity and user are
 used interchangeably, identity mainly being used when particular support for a
 person having multiple identities is being emphasised.
 
-Example: Miles Rout <æwind.net:~miles>
+Example: Miles Rout <aewind.net:~miles>
 Equivalent elsewhere: a matrix identity, an email address, a phone number
 
-Devices:  A device is ÆW's conception of a computer, mobile phone, etc.  It is
+Devices:  A device is AEW's conception of a computer, mobile phone, etc.  It is
 assumed that a person may have more than one device and that any of their
 devices represents and is trusted by them entirely unless and until it is
 expressly revoked.  Any device of a user may read any message sent to them, and
@@ -71,7 +71,7 @@ installs multiple copies of a client, those copies are separate devices.  If a
 client supports multiple user identities being logged into the same
 installation of the client, each login is treated as a separate device.
 
-Example: æwind.net:~miles/[device-id]
+Example: aewind.net:~miles/[device-id]
 Equivalent elsewhere: a device in the Signal protocol
 
 Groups:  A group is a collection of users, one or more of which are owners of
@@ -80,7 +80,7 @@ control groups by approving the entry or exit of members to or from the group.
 Like a user, each group has a home server, which must be the home server of at
 least one of its owners.
 
-Example: Æther Developers <æwind.net:@devs>
+Example: Æther Developers <aewind.net:@devs>
 Equivalent elsewhere: a Discord "server"
 
 Chats:  A chat is an exchange of messages between one or more users.  A user
@@ -96,7 +96,7 @@ User rooms:  A room owned directly by one or more users is called a user room,
 or just a room.  They are namespaced at the server level.  There may only be
 one room per server with a particular name at any point in time.
 
-Example: Æther Development <æwind.net:#dev>
+Example: Æther Development <aewind.net:#dev>
 Equivalent elsewhere: an IRC channel
 
 Group rooms:  A group room is a room whose owner is a group.  A room owned by a
@@ -105,30 +105,30 @@ visible to the members of that group, every member of that group is
 automatically a member of the room, and the room is controlled by the group's
 admins.  Note that group non-members may be invited to the room as well.
 
-Example: Æther Security <æwind.net:@devs#security>
+Example: Æther Security <aewind.net:@devs#security>
 Equivalent elsewhere: a Discord channel
 
 ## An Overview of the Protocol
 
-ÆW.IDENT is the protocol used to establish user and device identity.  Roughly,
+AEW.IDENT is the protocol used to establish user and device identity.  Roughly,
 .IDENT involves a user publishing certain public keys signed by certain other
 keys to their home server.  These keys establish the user's set of devices.
 .IDENT also includes the mechanisms for tying together user identities in the
 form of 'I AM' certificates.
 
-ÆW.1TO1 is used for communication between devices.  In the case of chats, .1TO1
+AEW.1TO1 is used for communication between devices.  In the case of chats, .1TO1
 is essentially used directly on top of .IDENT. 
 
-ÆW.QUORUM is the protocol used for multi-party decisions.  It is used to
+AEW.QUORUM is the protocol used for multi-party decisions.  It is used to
 implement shared room ownership and shared group ownership.
 
-ÆW.NTON is the protocol used for N-to-N communication.  It is used to implement
+AEW.NTON is the protocol used for N-to-N communication.  It is used to implement
 rooms.  
 
 ## Example: One-to-one chat, third-party server.
 
 Say that Alice and Bob wish to chat.  They each register on their mutual friend
-Eve's server eve.example using the method described in ÆW.IDENT.  They register
+Eve's server eve.example using the method described in AEW.IDENT.  They register
 their devices AAAA and BBBB respectively under the identities
 eve.example:~alice and eve.example:~bob.  Part of this involves each publishing
 certain public cryptographic keys to the server.  
@@ -144,7 +144,7 @@ How does Alice know that:
 2. The chat established using that information is secure?
 
 The latter is simpler to answer: it is ensured by the properties of the double
-ratchet algorithm at the heart of the ÆW.1TO1 protocol.
+ratchet algorithm at the heart of the AEW.1TO1 protocol.
 
 The former is trickier.  What Alice thinks of as "eve.example:~bob" is really a
 public identity key.  There is no inherent way for Alice to ensure that the
@@ -158,17 +158,17 @@ identity key's fingerprint using a GPG-signed email.  Or they could meet in
 real life to compare these values.  These are out-of-band methods.  What would
 be better would be if there were some way to integrate other forms of identity
 into the eve.example:~bob identity to endorse its legitimacy.  This is what
-ÆW.IDENT is all about it.  It provides a method by which persons can use things
+AEW.IDENT is all about it.  It provides a method by which persons can use things
 like DNS and GPG to certify the legitimacy of their public identity keys.  This
 comes in the form of 'I AM' certificates, which are signed statements of the
 form "I am [SERVER]:~[USER]" (or more accurately: "[SOME-ARBITRARY-IDENTITY] is
-[ÆW-PUBLIC-IDENTITY-KEY]", but generally the first identity is also the signer
-of the certificate, and in most cases is also in the form of an ÆW public
+[AEW-PUBLIC-IDENTITY-KEY]", but generally the first identity is also the signer
+of the certificate, and in most cases is also in the form of an AEW public
 identity key).
 
 As a general rule, chains of 'I AM' certificates should only be trusted
-recursively if all but one element of the chain is of the form "[ÆW-IDENTITY-1]
-certifies that [ÆW-IDENTITY-2] is [ÆW-IDENTITY-1]".  However, the
+recursively if all but one element of the chain is of the form "[AEW-IDENTITY-1]
+certifies that [AEW-IDENTITY-2] is [AEW-IDENTITY-1]".  However, the
 interpretation and presentation of 'I AM' certificates is left entirely up to
 the client implementation.  Different clients for different types of users may
 wish to treat trust in different ways.
@@ -187,7 +187,7 @@ do not need to do anything special.
 
 ## Example: Multi-party chat, third-party server.
 
-After a few weeks of using ÆW enjoyably, Alice invites a second friend,
+After a few weeks of using AEW enjoyably, Alice invites a second friend,
 Charlie, to join Eve's server.  Alice and Charlie chat away on Alice wishes to
 create a group chat to discuss the ongoing Ashes series with Bob and Charlie.  
 

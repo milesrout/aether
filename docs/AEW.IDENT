@@ -1,14 +1,15 @@
 <!-- vim: set ft=markdown: -->
 
-ÆW.IDENT: The identity portion of the ÆW protocol is used to establish the
+AEW.IDENT: The identity portion of the AEW protocol is used to establish the
 identity and ownership of users and devices.  This is the basis for the rest of
 the protocol, especially authenticity.
 
-ÆW.IDENT fits into ÆW as described in the overall description of ÆW in docs/ÆW.
+AEW.IDENT fits into AEW as described in the overall description of AEW in
+docs/AEW.
 
 ---
 
-An ÆW server has a number of user records, each of which records:
+An AEW server has a number of user records, each of which records:
 
 - The public identity key for the user
 - Free form information fields about the user, signed by the user's public
@@ -23,12 +24,12 @@ An ÆW server has a number of user records, each of which records:
 ## Example: ('I am' certificates)
 
 Alice is initially registered on Eve's server, eve.example.net.  However, Eve
-has told Alice that she no longer wishes to keep running an ÆW server.  What can
-Alice do?
+has told Alice that she no longer wishes to keep running an AEW server.  What
+can Alice do?
 
 The solution to this problem - or any other problem involving transferring
 identities between servers - is an 'I am' certificate.  Alice may register a
-new user on a different ÆW server run by Fred as fred.example.net:~alice.
+new user on a different AEW server run by Fred as fred.example.net:~alice.
 Alice may then publish a certificate on both alice.example.net and on
 fred.example.net saying "I am fred.example.net:~alice, signed
 eve.example.net:~alice" and vice versa.  These two certificates tie these two
@@ -37,7 +38,7 @@ identities together.
 Now, if Bob receives a message from Alice's new identity, his device will
 automatically retrieve the new identity and its certificates from
 fred.example.net, merge the identities and present the change of server to him.
-As long as Eve's ÆW server remains online, anyone sending a message to Alice
+As long as Eve's AEW server remains online, anyone sending a message to Alice
 will have the opportunity to learn of Alice's new identity.  
 
 If Charlie doesn't send Alice a message between the date on which Alice
@@ -52,7 +53,7 @@ messages to your whole contacts list.
 In general, while users are tied to home servers, users are not tied to a
 single home server, and may have identities on multiple servers for redundancy
 or for other reasons.  Alice registering on Fred's server does not invalidate
-or remove her registration on Eve's server.  However, the more home servers that
-Alice registers on, the more servers her phone and laptop will have to check for
-messages, which is a cost to Alice that should discourage her from mass
-registering on every server.
+or remove her registration on Eve's server.  However, the more home servers
+that Alice registers on, the more servers her phone and laptop will have to
+check for messages, which is a cost to Alice that should discourage her from
+mass registering on every server.
