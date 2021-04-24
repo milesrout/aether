@@ -1,9 +1,17 @@
 #include <sys/random.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include "util.h"
 #include "monocypher.h"
+
+void
+dumpbytes(const uint8_t *data, size_t size)
+{
+	while (size--)
+		fprintf(stderr, "%02x", *data++);
+}
 
 void
 randbytes(uint8_t *data, size_t size)
@@ -45,6 +53,19 @@ load32_le(const uint8_t s[4])
         | ((uint32_t)s[1] <<  8)
         | ((uint32_t)s[2] << 16)
         | ((uint32_t)s[3] << 24);
+}
+
+uint64_t
+load64_le(const uint8_t s[8])
+{
+    return load32_le(s) | ((uint64_t)load32_le(s+4) << 32);
+}
+
+void
+store64_le(uint8_t out[8], uint64_t in)
+{
+    store32_le(out    , (uint32_t)in );
+    store32_le(out + 4, in >> 32);
 }
 /* END: these are derived from monocypher directly */
 

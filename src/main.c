@@ -30,6 +30,7 @@
 #include "hkdf.h"
 #include "util.h"
 #include "mesg.h"
+#include "peertable.h"
 
 /* A note on terminology.
  *
@@ -65,7 +66,7 @@ static
 void
 displaykey(const char *name, const uint8_t *key, size_t size)
 {
-	/*printf("%s:\n", name);*/
+	printf("%s:\n", name);
 	printhexbytes(key, size);
 	putchar('\n');
 }
@@ -89,8 +90,6 @@ client(const char *addr, const char *port)
 	/* TODO: discover through DNS or HTTPS or something */
 	/* uint8_t isks[32]; */
 	int fd;
-	int FLAG_TESTING_ONLY_1 = 0;
-	int FLAG_TESTING_ONLY_2 = 0;
 	ssize_t nread;
 	uint8_t iskc[32], iskc_prv[32];
 	uint8_t ikc[32], ikc_prv[32];
@@ -125,74 +124,29 @@ client(const char *addr, const char *port)
 	}
 
 	{
-		uint8_t buf1[MESG_BUF_SIZE(256)];
-		uint8_t buf2[MESG_BUF_SIZE(128)];
-		uint8_t buf3[MESG_BUF_SIZE(1024)];
-		uint8_t buf[65536];
-		ssize_t nread;
+		uint8_t buf2[MESG_BUF_SIZE(24)];
 
-		memset(MESG_TEXT(buf1), 0x55, 256);
-		mesg_lock(&state, buf1, 256);
+		memset(MESG_TEXT(buf2), 0x77, 24);
+		mesg_lock(&state, buf2, 24);
 
-		memset(MESG_TEXT(buf2), 0x77, 128);
-		mesg_lock(&state, buf2, 128);
-
-		memset(MESG_TEXT(buf3), 0x99, 1024);
-		mesg_lock(&state, buf3, 1024);
-
-		safe_write(fd, buf3, MESG_BUF_SIZE(1024));
-		crypto_wipe(buf3, MESG_BUF_SIZE(1024));
-		fprintf(stderr, "sent 1024-byte message\n");
-
-		safe_write(fd, buf2, MESG_BUF_SIZE(128));
-		crypto_wipe(buf2, MESG_BUF_SIZE(128));
-		fprintf(stderr, "sent 128-byte message\n");
-
-		nread = safe_read(fd, buf, 65536);
-		if (mesg_unlock(&state, buf, nread))
-			abort();
-		displaykey("reply from server", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));
-		crypto_wipe(buf, nread);
-
-		safe_write(fd, buf1, MESG_BUF_SIZE(256));
-		crypto_wipe(buf1, MESG_BUF_SIZE(256));
-		fprintf(stderr, "sent 256-byte message\n");
-
+		safe_write(fd, buf2, MESG_BUF_SIZE(24));
+		crypto_wipe(buf2, MESG_BUF_SIZE(24));
+		fprintf(stderr, "sent 24-byte message\n");
 	}
 
 	{
 		uint8_t buf[65536];
 		ssize_t nread = safe_read(fd, buf, 65536);
-		int which = 0;
 
 		while (nread != -1 && (size_t)nread > MESG_BUF_SIZE(0)) {
-			which = which ? 0 : 1;
 			if (mesg_unlock(&state, buf, nread)) {
 				break;
 			}
 
-			if (which ? FLAG_TESTING_ONLY_1 : FLAG_TESTING_ONLY_2) {
-				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) + (which ? 1 : 2));
-				safe_write(fd, buf, nread + (which ? 1 : 2));
-				fprintf(stderr, "sent %ld-byte message\n", nread + (which ? 1 : 2));
-			} else {
-				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - (which ? 1 : 2));
-				safe_write(fd, buf, nread - (which ? 1 : 2));
-				fprintf(stderr, "sent %ld-byte message\n", nread - (which ? 1 : 2));
-			}
-
-			if (nread < 101) {
-				if (which)
-					FLAG_TESTING_ONLY_1 = 1;
-				else
-					FLAG_TESTING_ONLY_2 = 1;
-			}
-
-			if (nread > 199) {
-				if (which)
-					FLAG_TESTING_ONLY_1 = 0;
-				else
-					FLAG_TESTING_ONLY_2 = 0;
+			if ((size_t)nread > MESG_BUF_SIZE(1)) {
+				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - 1);
+				safe_write(fd, buf, nread - 1);
+				fprintf(stderr, "sent %lu-byte message\n", MESG_TEXT_SIZE(nread) - 1);
 			}
 
 			crypto_wipe(buf, 65536);
@@ -324,8 +278,10 @@ setclientup(const char *addr, const char *port)
 		if (fd == -1)
 			continue;
 
-		if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1)
+		if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1) {
+			freeaddrinfo(result);
 			return fd;
+		}
 
 		close(fd);
 	}
@@ -358,16 +314,18 @@ serve(const char *addr, const char *port)
 	struct addrinfo hints;
 	struct addrinfo *result, *rp;
 	int fd = -1;
-	int FLAG_TESTING_ONLY = 0;
 	int gai;
-	struct sockaddr_storage peeraddr;
-	socklen_t peeraddr_len;
-	ssize_t nread;
+	struct peertable peertable;
+	size_t nread;
 	uint8_t buf[65536];
 	uint8_t iks[32], iks_prv[32];
-	struct mesg_state state;
 
 	generate_kex_keypair(iks, iks_prv);
+
+	if (peertable_init(&peertable)) {
+		fprintf(stderr, "Couldn't initialise peer table.\n");
+		exit(EXIT_FAILURE);
+	}
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -399,13 +357,46 @@ serve(const char *addr, const char *port)
 	}
 
 	for (;;) {
-		peeraddr_len = sizeof(peeraddr);
-		nread = safe_recvfrom(fd, buf, 65536,
-			&peeraddr, &peeraddr_len);
+		struct peer *peer;
+		struct peer_init pi = {0};
+		char host[NI_MAXHOST], service[NI_MAXSERV];
 
-		/*fprintf(stderr, "Received %zd bytes.\n", nread);*/
-		if (FLAG_TESTING_ONLY == 0 && nread == MESG_HELLO_SIZE) {
-			FLAG_TESTING_ONLY = 1;
+		pi.addr_len = sizeof(pi.addr);
+		nread = safe_recvfrom(fd, buf, 65536,
+			&pi.addr, &pi.addr_len);
+
+		displaykey("pi->addr", (void *)&pi.addr, pi.addr_len);
+		if (!getnameinfo((struct sockaddr *)&pi.addr, pi.addr_len,
+				host, NI_MAXHOST,
+				service, NI_MAXSERV,
+				NI_NUMERICHOST|NI_NUMERICSERV)) {
+			fprintf(stderr, "Peer %s on port %s\n",
+				host, service);
+		} else {
+			fprintf(stderr, "Peer on unknown host and port\n");
+		}
+
+		fprintf(stderr, "Received %zu bytes. ", nread);
+
+		peer = peer_getbyaddr(&peertable, (struct sockaddr *)&pi.addr, pi.addr_len);
+		if (peer == NULL) {
+			fprintf(stderr, "Peer not found. ");
+			peer = peer_add(&peertable, &pi);
+			if (peer == NULL) {
+				fprintf(stderr, "Failed to add peer to peertable.\n");
+				abort();
+			}
+		} else {
+			fprintf(stderr, "Peer in table. ");
+		}
+
+		fprintf(stderr, "Peer status: %d\n", peer->status);
+
+		/* This is either a HELLO message from a new peer or a message
+		 * from a peer that isn't new but has just changed addresses.
+		 */
+		if (peer->status == PEER_NEW && nread == MESG_HELLO_SIZE) {
+			fprintf(stderr, "This appears to be a HELLO message from a new peer.\n");
 			/* TODO: Proof of work - to prevent denial of service:
 			 * The server should require that the client does some
 			 * proof-of-work task in order to initiate a connection.
@@ -420,25 +411,41 @@ serve(const char *addr, const char *port)
 			 *   server and how much they're loading the server at
 			 *   the moment)
 			 * - any other relevant factors
+			 *
+			 * Peers that have given a proof of work will be
+			 * 'confirmed' and able to roam.  Peers that have not
+			 * given a proof of work will be 'unconfirmed', will
+			 * not be able to roam, and hopefully will not be able
+			 * to do anything that could DOS the server until they
+			 * are confirmed.
 			 */
 
-			mesg_hshake_dprepare(&state,
+			mesg_hshake_dprepare(&peer->state,
 				isks, isks_prv, iks, iks_prv);
 
-			if (mesg_hshake_dcheck(&state, buf)) {
+			if (!mesg_hshake_dcheck(&peer->state, buf)) {
 				crypto_wipe(buf, MESG_HELLO_SIZE);
+
+				mesg_hshake_dreply(&peer->state, buf);
+				safe_sendto(fd, buf, MESG_REPLY_SIZE,
+					(struct sockaddr *)&peer->addr, peer->addr_len);
+				crypto_wipe(buf, MESG_REPLY_SIZE);
+
+				peer->status = PEER_ACTIVE;
+				fprintf(stderr, "Peer status: %d\n", peer->status);
 				continue;
 			}
-			crypto_wipe(buf, MESG_HELLO_SIZE);
 
-			mesg_hshake_dreply(&state, buf);
+			fprintf(stderr, "Whoops it wasn't a HELLO... "
+					"at least not a valid one\n");
+			/* It wasn't a hello message - at least not a valid one.
+			 * Check if it's a real message
+			 */
+		}
 
-			safe_sendto(fd, buf, MESG_REPLY_SIZE,
-				(struct sockaddr *)&peeraddr, peeraddr_len);
-			crypto_wipe(buf, MESG_REPLY_SIZE);
-		} else if (nread != -1 && (size_t)nread > MESG_BUF_SIZE(0)) {
-			if (mesg_unlock(&state, buf, nread)) {
-				fprintf(stderr, "Couldn't decrypt message with size=%ld (text_size=%lu)\n",
+		if (nread > MESG_BUF_SIZE(0)) {
+			if (mesg_unlock(&peer->state, buf, nread)) {
+				fprintf(stderr, "Couldn't decrypt message with size=%lu (text_size=%lu)\n",
 					nread, MESG_TEXT_SIZE(nread));
 				break;
 			}
@@ -446,14 +453,18 @@ serve(const char *addr, const char *port)
 				nread, MESG_TEXT_SIZE(nread));*/
 			displaykey("plain", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));
 
-			mesg_lock(&state, buf, MESG_TEXT_SIZE(nread));
+			mesg_lock(&peer->state, buf, MESG_TEXT_SIZE(nread));
 			safe_sendto(fd, buf, nread,
-				(struct sockaddr *)&peeraddr, peeraddr_len);
+				(struct sockaddr *)&pi.addr, pi.addr_len);
 			crypto_wipe(buf, nread);
 			/*fprintf(stderr, "Encrypted and sent message with size=%ld (text_size=%lu)\n",
 				nread, MESG_TEXT_SIZE(nread));*/
 
+			continue;
 		}
+
+		/* It wasn't a valid message at all. */
+
 	}
 }
 

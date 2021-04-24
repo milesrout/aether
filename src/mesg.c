@@ -84,6 +84,9 @@ static const uint8_t dh_info[]   = "AetherwindDiffieHellmanRatchet";
 static const uint8_t zero_nonce[24];
 static const uint8_t missing_key[32];
 
+static struct mesgkey_bucket *spare_buckets = NULL;
+static struct mesgkey *spare_mesgkeys = NULL;
+
 struct mesgkey {
 	uint32_t msn;
 	uint8_t mk[32];
@@ -219,6 +222,11 @@ bucket_create(struct mesg_ratchet_state *state)
 		return b;
 	}
 
+	if (NULL != (b = spare_buckets)) {
+		spare_buckets = b->next;
+		return b;
+	}
+
 	return malloc(sizeof *b);
 }
 
@@ -230,6 +238,11 @@ mesgkey_create(struct mesg_ratchet_state *state)
 
 	if (NULL != (m = state->spare_mesgkeys)) {
 		state->spare_mesgkeys = m->next;
+		return m;
+	}
+
+	if (NULL != (m = spare_mesgkeys)) {
+		spare_mesgkeys = m->next;
 		return m;
 	}
 
