@@ -1,11 +1,14 @@
 when a client wishes to communicate with a server it uses this protocol
+
 this protocol is conducted over UDP.  the client may roam (change its source IP
-and port) in between any packet it sends unless otherwise specified.  when the
-client roams, it should send a packet to the server indicating that it has done
-so, what its old IP was and what its new IP is and the sequence number of the
-last packet it successfully received from the server.  when it does so, the
-server should resend any packets that it sent to the old address.  the details
-of this roaming protocol will be worked out later.
+and port) in between any two packets it sends unless otherwise specified.  when
+the client roams, it should send a packet to the server indicating that it has
+done so, what its old IP was and what its new IP is and the sequence number of
+the last packet it successfully received from the server.  the protocol
+supports roaming when the client does not do this but it is more expensive and
+incurs a hiccough in service.  when it does so, the server should resend any
+packets that it sent to the old address.  the details of this roaming protocol
+will be worked out later.
 
 general protocol steps:
 1. x3dh
@@ -41,73 +44,76 @@ associated with this session that are not explicitly permanent or long-term
 secrets (i.e. that are not ISK or IK private keys), such that one of the
 timeouts is refreshed whenever the secret key is used and such that one of the
 timeouts is never refreshed.  when either of the timeouts has expired, the the
-client and server MUST securely wiped all secrets controlled by that timeout,
+client and server MUST securely wipe all secrets controlled by that timeout,
 must abort the protocol, and must abandon any changes to internal state that
 have not been committed.
 
-assuming the client knows the server's ISK, call it isks:
-- the client generates an ephemeral keypair, call it ekc/ekc_prv
+- the client obtains the server's identity key, consisting of an identity
+  signing key, call it isks, and an identity key-exchange key, call it iks.
+- the client generates an ephemeral keypair hidden using the Elligator 2 map,
+  call it hkc/hkc_prv/hkc_hdn.
 - the client generates a random challenge value, call it cvc, for the server
   to sign.
-- the client sends to the server a packet containing:
+- the client does X25519 key exchange between hkc_prv and iks, and uses HKDF-BLAKE2b
+  to generate two 32-bit shared secrets, a key for its hello message, call it
+  hk, and a key for the server's reply message, call it rk.
+- the client generates a second ephemeral keypair, call it ekc/ekc_prv
+- the client creates a packet, call it the HELLO message, containing:
   - the client's permanent ISK, call it iskc
   - the client's permanent IK, call it ikc
   - the freshly generated EK, ekc
   - a signature by iskc of "AECI"||ikc, call it ikc_sig (?)
   - a signature by iskc of "AECE"||ekc, call it ekc_sig (?)
   - the challenge value cvc
+- the client encrypts the HELLO message with the key hk, empty associated data
+  and a blank nonce, and sends hkc_hdn+mac+ciphertext to the server.
+- the server performs X25519 key exchange between iks_prv and hkc, and uses
+  HKDF-BLAKE2b to generate hk and rk above.
+- the server decrypts the HELLO message using hk, then wipes hk.
 - the server verifies the signatures ikc_sig and ekc_sig
 - if the server has seen iskc before, it verifies that ikc in the above packet
   is equal to the recorded value for the ik recorded for iskc
 - the server generates a randomly generated challenge value, call it cvs,
-  for the client to sign.
-- the server replies with a packet containing:
-  - the server's permanent IK, call it iks
+  for the client to do proof of work and to sign.
+- the server creates a packet, call it the REPLY message, containing:
   - a freshly generated EK of its own, call it eks
-  - a signature by isks of "AESI"||iks, call it iks_sig (?)
-  - a signature by isks of "AESE"||eks, call it eks_sig (?)
+  - a signature by isks of "AESE"||eks, call it eks_sig
   - a signature by isks of "AESC"||cvc, call it cvc_sig
   - the challenge value cvs
-- the client verifies the signatures iks_sig and eks_sig
-- if the client has seen isks before, it verifies that iks in the above
-  packet is equal to the recorded value for the ik recorded for isks.
-- the client verifies that cvc_sig is a good signature of "AECC"||cvc.
-- the client generates a signature by iskc of "AECC"||cvs, call it cvs_sig.
-(thus if both the client and server have seen each other before, assuming
-neither's ISK has been compromised, all the values they have received from
-each other are authentic.  the client can be guaranteed this is not a replay
-attack now that the client has received the signed challenge value, but the
-server has not yet received its signed challenge value, so it still cannot be
-sure that this is not a replay attack.)
+- the server encrypts the REPLY message with the key rk, empty associated data
+  and a blank nonce, and sends mac+ciphertext to the client.
+- the client decrypts the REPLY message using rk, then wipes rk.
+- the client verifies the signature eks_sig
+- the client verifies the signature cvc_sig
+- the client does some proof of work task (to be determined) with cvs to
+  generate some byte array, call it proof.
+- the client generates a signature by iskc of proof, call it cvs_sig.
 - simultaneously with the server's reply packet:
 - the server does DH steps:
   - dh1 = DH(ikc, iks_prv)
   - dh2 = DH(ekc, iks_prv)
   - dh3 = DH(ikc, eks_prv)
   - dh4 = DH(ekc, eks_prv)
-  - sk = blake2b32(dh1 || dh2 || dh3 || dh4)
+  - sk = blake2b(dh1 || dh2 || dh3 || dh4)
 - the server then erases eks_prv. (QUESTION: Could the server PUBLISH its ephemeral private key here?)
 - when the client receives the server's reply:
 - the client does DH steps:
   - dh1 = DH(iks, ikc_prv)
-  - dh2 = DH(eks, ikc_prv)
-  - dh3 = DH(iks, ekc_prv)
+  - dh2 = DH(iks, ekc_prv)
+  - dh3 = DH(eks, ikc_prv)
   - dh4 = DH(eks, ekc_prv)
-  - sk = blake2b32(dh1 || dh2 || dh3 || dh4)
+  - sk = blake2b(dh1 || dh2 || dh3 || dh4)
 - the client then erases ekc_prv. (QUESTION: Could the client PUBLISH its ephemeral private key here?)
 (at this point both ephemeral keys have been erased and the client and server
 share a secret key sk).
 - in all that follows 'encrypted', unless otherwise specified, means
   'AEAD-encrypted with a freshly generated random nonce and associated data
   (AD), call it ad, of ikc||iks'.
-- the client then sends the server a packet containing the cvs_sig and the
-  first message in the double ratchet one-to-one protocol, encrypted with
-  secret key sk.  once the server receives that message it can be sure that
-  this is a completely fresh session.
-
-the server and client must each initialise their states.
-the state of the server consists of: 
-- 
+- all subsequent messages are messages of the post-handshake double ratchet
+  protocol, encrypted using keys derived through HKDF-BLAKE2b-based KDF
+  ratchets from sk and newly generated ephemeral keypairs.
+- the first message of the post-handshake protocol from the client must
+  contain proof.
 
 at any given point after initialisation, the server will have a current keypair
 ksn/ksn_prv and an old public key of the client kcm.  when the server receives
