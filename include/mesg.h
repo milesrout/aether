@@ -12,12 +12,15 @@ struct mesg {
 };
 struct mesg_hshake_cstate {
 	uint8_t iskd[32];        /* daemon public identity (signing) key */
+	uint8_t ikd[32];         /* daemon public identity (key-xchg) key */
 	uint8_t iskc[32];        /* client public identity (signing) key */
 	uint8_t iskc_prv[32];    /* client private identity (signing) key */
 	uint8_t ikc[32];         /* client public identity (key-xchg) key */
 	uint8_t ikc_prv[32];     /* client private identity (key-xchg) key */
 	uint8_t ekc[32];         /* client public ephemeral (key-xchg) key */
 	uint8_t ekc_prv[32];     /* client private ephemeral (key-xchg) key */
+	uint8_t hkc[32];         /* client public hidden (key-xchg) key */
+	uint8_t hkc_prv[32];     /* client private hidden (key-xchg) key */
 	uint8_t cvc[32];         /* challenge value from client */
 };
 struct mesg_hshake_dstate {
@@ -59,14 +62,33 @@ struct mesg_state {
 		struct mesg_ratchet_state ra;
 	} u;
 };
+struct hshake_hello_msg {
+	uint8_t hidden[32];
+	uint8_t mac[16];
+	uint8_t nonce[24];
+	uint8_t iskc[32];    /* client's long-term key-signing (identity) key */
+	uint8_t ikc[32];     /* client's long-term key-exchng. (identity) key */
+	uint8_t ekc[32];     /* client's ephemeral key-exchange key */
+	uint8_t cvc[32];     /* client's challenge value */
+	uint8_t ikc_sig[64]; /* signature of ikc by iskc */
+	uint8_t ekc_sig[64]; /* signature of ekc by iskc */
+};
+struct hshake_reply_msg {
+	uint8_t iks[32];     /* server's long-term key-exchange (identity) key */
+	uint8_t eks[32];     /* server's ephemeral key-exchange key */
+	uint8_t iks_sig[64]; /* signature of iks by iskd */
+	uint8_t eks_sig[64]; /* signature of eks by iskd */
+	uint8_t cvc_sig[64]; /* signature of cvc by iskd */
+	uint8_t cvs[32];     /* server's challenge value */
+};
 extern int mesg_example1(int fd);
 extern int mesg_example2(int fd);
-#define MESG_HELLO_SIZE 256
-#define MESG_REPLY_SIZE 288
+#define MESG_HELLO_SIZE sizeof(struct hshake_hello_msg)
+#define MESG_REPLY_SIZE sizeof(struct hshake_reply_msg)
 /* MESG_HSHAKE_SIZE = MAX( MESG_{HELLO,REPLY}_SIZE ) */
-#define MESG_HSHAKE_SIZE 288
+#define MESG_HSHAKE_SIZE MESG_HELLO_SIZE
 extern void mesg_hshake_cprepare(struct mesg_state *state,
-	const uint8_t his_sign_public_key[32],
+	const uint8_t his_sign_public_key[32], const uint8_t his_kex_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
 extern void mesg_hshake_chello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE]);

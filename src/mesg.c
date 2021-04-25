@@ -505,28 +505,6 @@ hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 	crypto_wipe(tmp, 96);
 }
 
-
-struct hshake_hello_msg {
-	uint8_t iskc[32];    /* client's long-term key-signing (identity) key */
-	uint8_t ikc[32];     /* client's long-term key-exchng. (identity) key */
-	uint8_t ekc[32];     /* client's ephemeral key-exchange key */
-	uint8_t cvc[32];     /* client's challenge value */
-	uint8_t ikc_sig[64]; /* signature of ikc by iskc */
-	uint8_t ekc_sig[64]; /* signature of ekc by iskc */
-};
-
-/* this message is sent assuming that the client knows iskd, the server's
- * long-term key-signing (identity) key.
- */
-struct hshake_reply_msg {
-	uint8_t iks[32];     /* server's long-term key-exchange (identity) key */
-	uint8_t eks[32];     /* server's ephemeral key-exchange key */
-	uint8_t iks_sig[64]; /* signature of iks by iskd */
-	uint8_t eks_sig[64]; /* signature of eks by iskd */
-	uint8_t cvc_sig[64]; /* signature of cvc by iskd */
-	uint8_t cvs[32];     /* server's challenge value */
-};
-
 void
 mesg_hshake_dprepare(struct mesg_state *state,
 		const uint8_t iskd[32], const uint8_t iskd_prv[32],
@@ -545,7 +523,8 @@ mesg_hshake_dprepare(struct mesg_state *state,
 }
 
 void
-mesg_hshake_cprepare(struct mesg_state *state, const uint8_t iskd[32],
+mesg_hshake_cprepare(struct mesg_state *state,
+		const uint8_t iskd[32], const uint8_t ikd[32],
 		const uint8_t iskc[32], const uint8_t iskc_prv[32],
 		const uint8_t ikc[32], const uint8_t ikc_prv[32])
 {
@@ -554,11 +533,13 @@ mesg_hshake_cprepare(struct mesg_state *state, const uint8_t iskd[32],
 	crypto_wipe(state, sizeof *state);
 
 	memcpy(hsc->iskd,    iskd,     32);
+	memcpy(hsc->ikd,     ikd,      32);
 	memcpy(hsc->iskc,    iskc,     32);
 	memcpy(hsc->iskc_prv,iskc_prv, 32);
 	memcpy(hsc->ikc,     ikc,      32);
 	memcpy(hsc->ikc_prv, ikc_prv,  32);
 	generate_kex_keypair(hsc->ekc, hsc->ekc_prv);
+	generate_hidden_keypair(hsc->hkc, hsc->hkc_prv);
 	randbytes(hsc->cvc, 32);
 }
 
@@ -567,14 +548,49 @@ mesg_hshake_chello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
 {
 	struct mesg_hshake_cstate *hsc = &state->u.hsc;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
+	uint8_t shared[32];
 
-	memcpy(hellomsg->iskc, hsc->iskc, 32);
-	memcpy(hellomsg->ikc,  hsc->ikc,  32);
-	memcpy(hellomsg->ekc,  hsc->ekc,  32);
-	memcpy(hellomsg->cvc,  hsc->cvc,  32);
+	/* content of the hello message */
+	memcpy(hellomsg->iskc,   hsc->iskc, 32);
+	memcpy(hellomsg->ikc,    hsc->ikc,  32);
+	memcpy(hellomsg->ekc,    hsc->ekc,  32);
+	memcpy(hellomsg->cvc,    hsc->cvc,  32);
 	sign_key(hellomsg->ikc_sig, hsc->iskc_prv, hsc->iskc, "AHCI", hsc->ikc);
 	sign_key(hellomsg->ekc_sig, hsc->iskc_prv, hsc->iskc, "AHCE", hsc->ekc);
+
+	/* encrypt the hello message */
+	memcpy(hellomsg->hidden, hsc->hkc,  32);
+	crypto_key_exchange(shared, hsc->hkc_prv, hsc->ikd);
+	randbytes(hellomsg->nonce, 24);
+	crypto_lock(hellomsg->mac,
+		hellomsg->iskc,
+		shared,
+		hellomsg->nonce,
+		hellomsg->iskc,
+		sizeof(struct hshake_hello_msg) - offsetof(struct hshake_hello_msg, iskc));
+	crypto_wipe(shared, 32);
 }
+
+static
+int
+try_decrypt_hello(struct mesg_hshake_dstate *hsd, struct hshake_hello_msg *hellomsg)
+{
+	uint8_t shared[32];
+	int result;
+
+	crypto_hidden_to_curve(hellomsg->hidden, hellomsg->hidden);
+	crypto_key_exchange(shared, hsd->ikd_prv, hellomsg->hidden);
+	result = crypto_unlock(
+		hellomsg->iskc,
+		shared,
+		hellomsg->nonce,
+		hellomsg->mac,
+		hellomsg->iskc,
+		MESG_HELLO_SIZE - offsetof(struct hshake_hello_msg, iskc));
+	crypto_wipe(shared, 32);
+	return result;
+}
+
 
 int
 mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
@@ -582,10 +598,13 @@ mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
 	struct mesg_hshake_dstate *hsd = &state->u.hsd;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
 
+	if (try_decrypt_hello(hsd, hellomsg))
+		return -1;
 	if (check_key(hellomsg->iskc, "AHCI", hellomsg->ikc, hellomsg->ikc_sig))
 		return -1;
 	if (check_key(hellomsg->iskc, "AHCE", hellomsg->ekc, hellomsg->ekc_sig))
 		return -1;
+
 	memcpy(hsd->cvc, hellomsg->cvc, 32);
 	memcpy(hsd->ikc, hellomsg->ikc, 32);
 	memcpy(hsd->ekc, hellomsg->ekc, 32);
@@ -682,8 +701,9 @@ end:	crypto_wipe(ikc,    32);
 int
 mesg_example1(int fd)
 {
-	/* This needs to be obtained somehow */
+	/* These need to be obtained somehow */
 	uint8_t server_sign_public_key[32];
+	uint8_t server_kex_public_key[32];
 	/* In reality these are long-term keys, not generated every time. */
 	uint8_t sign_public_key[32], sign_private_key[32];
 	uint8_t kex_public_key[32], kex_private_key[32];
@@ -691,6 +711,8 @@ mesg_example1(int fd)
 
 	memcpy(server_sign_public_key, isks, 32);
 	(void)isks_prv;
+	memcpy(server_sign_public_key, iks, 32);
+	(void)iks_prv;
 
 	generate_sign_keypair(sign_public_key, sign_private_key);
 	generate_kex_keypair(kex_public_key, kex_private_key);
@@ -700,11 +722,11 @@ mesg_example1(int fd)
 
 		/* Prepare the message state for the first handshake message */
 		mesg_hshake_cprepare(&state,
-			server_sign_public_key,
+			server_sign_public_key, server_kex_public_key,
 			sign_public_key, sign_private_key,
 			kex_public_key, kex_private_key);
 
-		/* Create the hello message and update state */
+		/* Create the HELLO message and update state */
 		mesg_hshake_chello(&state, buf);
 
 		/* Write the hello message out to a socket */

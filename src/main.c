@@ -31,6 +31,9 @@
 #include "util.h"
 #include "mesg.h"
 #include "peertable.h"
+#include "proof.h"
+
+static const char *progname;
 
 /* A note on terminology.
  *
@@ -53,6 +56,7 @@ static void displaykey(const char *name, const uint8_t *key, size_t size);
 static void safe_write(int fd, const uint8_t *buf, size_t size);
 static size_t safe_read(int fd, uint8_t *buf, size_t size);
 static int setclientup(const char *addr, const char *port);
+static void usage(void);
 
 static
 void
@@ -66,9 +70,9 @@ static
 void
 displaykey(const char *name, const uint8_t *key, size_t size)
 {
-	printf("%s:\n", name);
+	fprintf(stderr, "%s:\n", name);
 	printhexbytes(key, size);
-	putchar('\n');
+	fprintf(stderr, "\n");
 }
 
 /* TODO: discover through DNS or HTTPS or something */
@@ -85,7 +89,7 @@ union mesgbuf {
 
 static
 int
-client(const char *addr, const char *port)
+client(int argc, char **argv)
 {
 	/* TODO: discover through DNS or HTTPS or something */
 	/* uint8_t isks[32]; */
@@ -94,16 +98,23 @@ client(const char *addr, const char *port)
 	uint8_t iskc[32], iskc_prv[32];
 	uint8_t ikc[32], ikc_prv[32];
 	struct mesg_state state;
+	const char *host, *port;
+
+	if (argc != 4)
+		usage();
+
+	host = argv[2];
+	port = argv[3];
 
 	generate_sign_keypair(iskc, iskc_prv);
 	generate_kex_keypair(ikc, ikc_prv);
 
-	fd = setclientup(addr, port);
+	fd = setclientup(host, port);
 
 	{
 		uint8_t buf[MESG_HSHAKE_SIZE + 1];
 
-		mesg_hshake_cprepare(&state, isks, iskc, iskc_prv, ikc, ikc_prv);
+		mesg_hshake_cprepare(&state, isks, iks, iskc, iskc_prv, ikc, ikc_prv);
 		mesg_hshake_chello(&state, buf);
 		safe_write(fd, buf, MESG_HELLO_SIZE);
 		crypto_wipe(buf, MESG_HELLO_SIZE);
@@ -124,21 +135,19 @@ client(const char *addr, const char *port)
 	}
 
 	{
-		uint8_t buf2[MESG_BUF_SIZE(24)];
-
-		memset(MESG_TEXT(buf2), 0x77, 24);
-		mesg_lock(&state, buf2, 24);
-
-		safe_write(fd, buf2, MESG_BUF_SIZE(24));
-		crypto_wipe(buf2, MESG_BUF_SIZE(24));
-		fprintf(stderr, "sent 24-byte message\n");
-	}
-
-	{
 		uint8_t buf[65536];
-		ssize_t nread = safe_read(fd, buf, 65536);
+		ssize_t nread;
 
-		while (nread != -1 && (size_t)nread > MESG_BUF_SIZE(0)) {
+		memset(MESG_TEXT(buf), 0x77, 24);
+		mesg_lock(&state, buf, 24);
+
+		safe_write(fd, buf, MESG_BUF_SIZE(24));
+		crypto_wipe(buf, MESG_BUF_SIZE(24));
+		fprintf(stderr, "sent 24-byte message\n");
+
+		nread = safe_read(fd, buf, 65536);
+
+		while (nread != -1 && (size_t)nread > MESG_BUF_SIZE(1)) {
 			if (mesg_unlock(&state, buf, nread)) {
 				break;
 			}
@@ -309,7 +318,7 @@ setclientup(const char *addr, const char *port)
 
 static
 void
-serve(const char *addr, const char *port)
+serve(int argc, char **argv)
 {
 	struct addrinfo hints;
 	struct addrinfo *result, *rp;
@@ -318,9 +327,13 @@ serve(const char *addr, const char *port)
 	struct peertable peertable;
 	size_t nread;
 	uint8_t buf[65536];
-	uint8_t iks[32], iks_prv[32];
+	const char *host, *port;
 
-	generate_kex_keypair(iks, iks_prv);
+	if (argc != 4)
+		usage();
+
+	host = argv[2];
+	port = argv[3];
 
 	if (peertable_init(&peertable)) {
 		fprintf(stderr, "Couldn't initialise peer table.\n");
@@ -332,7 +345,7 @@ serve(const char *addr, const char *port)
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_flags = AI_PASSIVE;
 
-	gai = getaddrinfo(addr, port, &hints, &result);
+	gai = getaddrinfo(host, port, &hints, &result);
 	if (gai != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(gai));
 		exit(EXIT_FAILURE);
@@ -393,10 +406,12 @@ serve(const char *addr, const char *port)
 		fprintf(stderr, "Peer status: %d\n", peer->status);
 
 		/* This is either a HELLO message from a new peer or a message
-		 * from a peer that isn't new but has just changed addresses.
+		 * from a peer that isn't new but has just changed addresses
+		 * that just happens to be exactly MESG_HELLO_SIZE bytes.
 		 */
 		if (peer->status == PEER_NEW && nread == MESG_HELLO_SIZE) {
 			fprintf(stderr, "This appears to be a HELLO message from a new peer.\n");
+
 			/* TODO: Proof of work - to prevent denial of service:
 			 * The server should require that the client does some
 			 * proof-of-work task in order to initiate a connection.
@@ -420,6 +435,9 @@ serve(const char *addr, const char *port)
 			 * are confirmed.
 			 */
 
+			crypto_wipe(&peer->state, sizeof peer->state);
+
+			displaykey("hello", buf, MESG_HELLO_SIZE);
 			mesg_hshake_dprepare(&peer->state,
 				isks, isks_prv, iks, iks_prv);
 
@@ -470,27 +488,75 @@ serve(const char *addr, const char *port)
 
 static
 void
-usage(const char *prog)
+usage(void)
 {
-	fprintf(stderr, "usage: %s HOST PORT (c[lient] | d[aemon))\n", prog);
+	fprintf(stderr, "usage: %s (k[eygen] | p[roof] | c[lient] HOST PORT | d[aemon) HOST PORT)\n",
+		progname);
 	exit(EXIT_FAILURE);
+}
+
+static
+void
+proof(int argc, char **argv)
+{
+	uint8_t response[96];
+	uint8_t challenge[64];
+	uint8_t signing_key[32];
+	uint8_t signing_key_prv[32];
+	uint8_t difficulty = 4;
+
+	(void)argv;
+
+	if (argc != 2)
+		usage();
+
+	randbytes(challenge, 64);
+	randbytes(signing_key_prv, 32);
+	crypto_sign_public_key(signing_key, signing_key_prv);
+
+	displaykey("challenge", challenge, 64);
+	displaykey("public key", signing_key, 32);
+	displaykey("private key", signing_key_prv, 32);
+
+	proof_solve(response, challenge, signing_key, signing_key_prv, difficulty);
+
+	if (proof_check(response, challenge, signing_key, difficulty))
+		fprintf(stderr, "Could not verify challenge response.\n");
+	else
+		fprintf(stderr, "Verified proof of work.\n");
+}
+
+static
+void
+keygen(int argc, char **argv)
+{
+	uint8_t pub[32], prv[32];
+
+	(void)argv;
+
+	if (argc != 2)
+		usage();
+
+	generate_kex_keypair(pub, prv);
+
+	displaykey("pub", pub, 32);
+	displaykey("prv", prv, 32);
 }
 
 int
 main(int argc, char **argv)
 {
-	const char *host, *port;
+	progname = argv[0];
 
-	if (argc != 4) 
-		usage(argv[0]);
+	if (argc < 2)
+		usage();
 
-	host = argv[1];
-	port = argv[2];
-
-	switch (argv[3][0]) {
-		case 'c': client(host, port); break;
-		case 'd': serve(host, port); break;
-		default:  usage(argv[0]);
+	switch (argv[1][0]) {
+		case 'k': keygen(argc, argv); break;
+		case 'p': proof(argc, argv); break;
+		case 'c': client(argc, argv); break;
+		case 'd': serve(argc, argv); break;
+		default:  usage();
 	}
 
 	return 0;

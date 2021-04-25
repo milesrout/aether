@@ -23,6 +23,15 @@ randbytes(uint8_t *data, size_t size)
 }
 
 void
+generate_hidden_keypair(uint8_t hidden_key[32], uint8_t private_key[32])
+{
+	uint8_t seed[32];
+	randbytes(seed, 32);
+	crypto_hidden_key_pair(hidden_key, private_key, seed);
+	crypto_wipe(seed, 32);
+}
+
+void
 generate_kex_keypair(uint8_t public_key[32], uint8_t private_key[32])
 {
 	randbytes(private_key, 32);
