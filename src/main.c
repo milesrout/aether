@@ -46,23 +46,53 @@ static const char *progname;
  * secret key: exclusively refers to _shared_ secret keys.
  */
 
-/* real functions */
 static void safe_write(int fd, const uint8_t *buf, size_t size);
 static size_t safe_read(int fd, uint8_t *buf, size_t size);
-static int setclientup(const char *addr, const char *port);
 static void usage(void);
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
 
-struct ra_init_msg {
-	uint8_t ikc[32];     /* client's identity key */
-};
+static
+int
+setclientup(const char *addr, const char *port)
+{
+	struct addrinfo hints, *result, *rp;
+	int fd = -1, gai;
 
-union mesgbuf {
-	uint8_t buf[65536];
-	struct mesg mesg;
-};
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+
+	gai = getaddrinfo(addr, port, &hints, &result);
+	if (gai != 0) {
+		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(gai));
+		exit(EXIT_FAILURE);
+	}
+
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		if (fd == -1)
+			continue;
+
+		if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1) {
+			freeaddrinfo(result);
+			return fd;
+		}
+
+		close(fd);
+	}
+
+	freeaddrinfo(result);
+
+	if (rp == NULL) {
+		fprintf(stderr, "Couldn't bind to socket.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	fprintf(stderr, "Couldn't connect to %s on port %s.\n", addr, port);
+	exit(EXIT_FAILURE);
+}
 
 static
 int
@@ -235,47 +265,6 @@ safe_sendto(int fd, const uint8_t *buf, size_t size, struct sockaddr *peeraddr, 
 }
 
 static
-int
-setclientup(const char *addr, const char *port)
-{
-	struct addrinfo hints, *result, *rp;
-	int fd = -1, gai;
-
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_DGRAM;
-
-	gai = getaddrinfo(addr, port, &hints, &result);
-	if (gai != 0) {
-		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(gai));
-		exit(EXIT_FAILURE);
-	}
-
-	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-		if (fd == -1)
-			continue;
-
-		if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1) {
-			freeaddrinfo(result);
-			return fd;
-		}
-
-		close(fd);
-	}
-
-	freeaddrinfo(result);
-
-	if (rp == NULL) {
-		fprintf(stderr, "Couldn't bind to socket.\n");
-		exit(EXIT_FAILURE);
-	}
-
-	fprintf(stderr, "Couldn't connect to %s on port %s.\n", addr, port);
-	exit(EXIT_FAILURE);
-}
-
-static
 void
 serve(int argc, char **argv)
 {
@@ -438,15 +427,6 @@ serve(int argc, char **argv)
 
 static
 void
-usage(void)
-{
-	fprintf(stderr, "usage: %s (k[eygen] | p[roof] | c[lient] HOST PORT | d[aemon) HOST PORT)\n",
-		progname);
-	exit(EXIT_FAILURE);
-}
-
-static
-void
 proof(int argc, char **argv)
 {
 	uint8_t response[96];
@@ -491,6 +471,15 @@ keygen(int argc, char **argv)
 
 	displaykey("pub", pub, 32);
 	displaykey("prv", prv, 32);
+}
+
+static
+void
+usage(void)
+{
+	fprintf(stderr, "usage: %s (k[eygen] | p[roof] | c[lient] HOST PORT | d[aemon) HOST PORT)\n",
+		progname);
+	exit(EXIT_FAILURE);
 }
 
 int
