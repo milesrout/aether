@@ -46,34 +46,11 @@ static const char *progname;
  * secret key: exclusively refers to _shared_ secret keys.
  */
 
-/* types */
-/* debugging */
-static void printhexbytes(const uint8_t *data, size_t size);
-static void displaykey(const char *name, const uint8_t *key, size_t size);
-
 /* real functions */
-
 static void safe_write(int fd, const uint8_t *buf, size_t size);
 static size_t safe_read(int fd, uint8_t *buf, size_t size);
 static int setclientup(const char *addr, const char *port);
 static void usage(void);
-
-static
-void
-printhexbytes(const uint8_t *data, size_t size)
-{
-	while (size--)
-		fprintf(stderr, "%02x", *data++);
-}
-
-static
-void
-displaykey(const char *name, const uint8_t *key, size_t size)
-{
-	fprintf(stderr, "%s:\n", name);
-	printhexbytes(key, size);
-	fprintf(stderr, "\n");
-}
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
@@ -94,7 +71,6 @@ client(int argc, char **argv)
 	/* TODO: discover through DNS or HTTPS or something */
 	/* uint8_t isks[32]; */
 	int fd;
-	ssize_t nread;
 	uint8_t iskc[32], iskc_prv[32];
 	uint8_t ikc[32], ikc_prv[32];
 	struct mesg_state state;
@@ -112,7 +88,8 @@ client(int argc, char **argv)
 	fd = setclientup(host, port);
 
 	{
-		uint8_t buf[MESG_HSHAKE_SIZE + 1];
+		uint8_t buf[65536];
+		ssize_t nread;
 
 		mesg_hshake_cprepare(&state, isks, iks, iskc, iskc_prv, ikc, ikc_prv);
 		mesg_hshake_chello(&state, buf);
@@ -127,16 +104,12 @@ client(int argc, char **argv)
 		}
 
 		if (mesg_hshake_cfinish(&state, buf)) {
+			fprintf(stderr, "Reply message cannot be decrypted.\n");
 			crypto_wipe(buf, MESG_REPLY_SIZE);
 			return -1;
 		}
 
 		crypto_wipe(buf, MESG_REPLY_SIZE);
-	}
-
-	{
-		uint8_t buf[65536];
-		ssize_t nread;
 
 		memset(MESG_TEXT(buf), 0x77, 24);
 		mesg_lock(&state, buf, 24);
@@ -267,10 +240,6 @@ setclientup(const char *addr, const char *port)
 {
 	struct addrinfo hints, *result, *rp;
 	int fd = -1, gai;
-	/*
-	ssize_t nread;
-	char buf[128];
-	*/
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -304,16 +273,6 @@ setclientup(const char *addr, const char *port)
 
 	fprintf(stderr, "Couldn't connect to %s on port %s.\n", addr, port);
 	exit(EXIT_FAILURE);
-
-	/*
-	for (;;) {
-		nread = write(fd, buf, 128);
-		if (nread == 128)
-			continue;
-
-		fprintf(stderr, "Received %zd bytes.\n", nread);
-	}
-	*/
 }
 
 static
@@ -378,7 +337,6 @@ serve(int argc, char **argv)
 		nread = safe_recvfrom(fd, buf, 65536,
 			&pi.addr, &pi.addr_len);
 
-		displaykey("pi->addr", (void *)&pi.addr, pi.addr_len);
 		if (!getnameinfo((struct sockaddr *)&pi.addr, pi.addr_len,
 				host, NI_MAXHOST,
 				service, NI_MAXSERV,
@@ -437,7 +395,6 @@ serve(int argc, char **argv)
 
 			crypto_wipe(&peer->state, sizeof peer->state);
 
-			displaykey("hello", buf, MESG_HELLO_SIZE);
 			mesg_hshake_dprepare(&peer->state,
 				isks, isks_prv, iks, iks_prv);
 
@@ -454,11 +411,8 @@ serve(int argc, char **argv)
 				continue;
 			}
 
-			fprintf(stderr, "Whoops it wasn't a HELLO... "
-					"at least not a valid one\n");
-			/* It wasn't a hello message - at least not a valid one.
-			 * Check if it's a real message
-			 */
+			fprintf(stderr, "Whoops it wasn't a HELLO... at least not a valid one\n");
+			/* Fall through: check if it's a real message */
 		}
 
 		if (nread > MESG_BUF_SIZE(0)) {
@@ -467,16 +421,12 @@ serve(int argc, char **argv)
 					nread, MESG_TEXT_SIZE(nread));
 				break;
 			}
-			/*fprintf(stderr, "Decrypted message with size=%ld (text_size=%lu)\n",
-				nread, MESG_TEXT_SIZE(nread));*/
 			displaykey("plain", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));
 
 			mesg_lock(&peer->state, buf, MESG_TEXT_SIZE(nread));
 			safe_sendto(fd, buf, nread,
 				(struct sockaddr *)&pi.addr, pi.addr_len);
 			crypto_wipe(buf, nread);
-			/*fprintf(stderr, "Encrypted and sent message with size=%ld (text_size=%lu)\n",
-				nread, MESG_TEXT_SIZE(nread));*/
 
 			continue;
 		}

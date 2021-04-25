@@ -25,32 +25,6 @@
 #define WORKAREA (100 * 1024)
 #define ITERATIONS 3
 
-static void displaykey(const char *name, const uint8_t *key, size_t size);
-
-static
-void
-displaykey(const char *name, const uint8_t *key, size_t size)
-{
-	printf("%s:\n", name);
-	dumpbytes(key, size);
-	putchar('\n');
-}
-
-void crypto_argon2i(uint8_t       *hash,      uint32_t hash_size,     // >= 4
-                    void          *work_area, uint32_t nb_blocks,     // >= 8
-                    uint32_t       nb_iterations,                     // >= 3
-                    const uint8_t *password,  uint32_t password_size,
-                    const uint8_t *salt,      uint32_t salt_size);    // >= 8
-
-void crypto_argon2i_general(uint8_t       *hash,      uint32_t hash_size,// >= 4
-                            void          *work_area, uint32_t nb_blocks,// >= 8
-                            uint32_t       nb_iterations,                // >= 3
-                            const uint8_t *password,  uint32_t password_size,
-                            const uint8_t *salt,      uint32_t salt_size,// >= 8
-                            const uint8_t *key,       uint32_t key_size,
-                            const uint8_t *ad,        uint32_t ad_size);
-
-
 /* Proof of work.  A proof of work is created by just generating 64 random
  * bytes.  These bytes are called the challenge.  These bytes are sent to a
  * client, who then must do some work to generate the result we want.
@@ -89,7 +63,7 @@ proof_check(const uint8_t response[96], const uint8_t challenge[64],
 	uint8_t hash[64];
 	uint8_t *workarea = NULL;
 	uint8_t challenge_and_salt[96];
-	int result;
+	int result = -1;
 
 	memcpy(challenge_and_salt,      challenge,     64);
 	memcpy(challenge_and_salt + 64, response + 64, 32);
