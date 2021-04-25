@@ -1,5 +1,5 @@
 ifeq ($(BUILD),release)
-	CFLAGS += -O3 -s -D_FORTIFY_SOURCE=2 -DNDEBUG -fno-delete-null-pointer-checks
+	CFLAGS += -O3 -s -D_FORTIFY_SOURCE=2 -DNDEBUG -fno-delete-null-pointer-checks -march=native
 else ifeq ($(BUILD),valgrind)
 	CFLAGS += -Og -g -Werror -DÆTHER_USE_VALGRIND
 else ifeq ($(BUILD),sanitise)
