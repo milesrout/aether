@@ -430,21 +430,21 @@ void
 proof(int argc, char **argv)
 {
 	uint8_t response[96];
-	uint8_t challenge[64];
+	uint8_t challenge[32];
 	uint8_t signing_key[32];
 	uint8_t signing_key_prv[32];
-	uint8_t difficulty = 4;
+	uint8_t difficulty = 26;
 
 	(void)argv;
 
 	if (argc != 2)
 		usage();
 
-	randbytes(challenge, 64);
+	randbytes(challenge, 32);
 	randbytes(signing_key_prv, 32);
 	crypto_sign_public_key(signing_key, signing_key_prv);
 
-	displaykey("challenge", challenge, 64);
+	displaykey("challenge", challenge, 32);
 	displaykey("public key", signing_key, 32);
 	displaykey("private key", signing_key_prv, 32);
 

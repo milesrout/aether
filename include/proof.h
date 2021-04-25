@@ -13,15 +13,15 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-extern void proof_create(uint8_t challenge[64]);
+extern void proof_create(uint8_t challenge[32]);
 extern int proof_check(
 	const uint8_t response[96],
-	const uint8_t challenge[64],
+	const uint8_t challenge[32],
 	const uint8_t signing_key[32],
 	uint8_t difficulty);
 extern void proof_solve(
 	uint8_t response[96],
-	const uint8_t challenge[64],
+	const uint8_t challenge[32],
 	const uint8_t signing_key[32],
 	const uint8_t signing_key_prv[32],
 	uint8_t difficulty);

@@ -22,10 +22,7 @@
 #include "util.h"
 #include "proof.h"
 
-#define WORKAREA (100 * 1024)
-#define ITERATIONS 3
-
-/* Proof of work.  A proof of work is created by just generating 64 random
+/* Proof of work.  A proof of work is created by just generating 32 random
  * bytes.  These bytes are called the challenge.  These bytes are sent to a
  * client, who then must do some work to generate the result we want.
  *
@@ -36,9 +33,9 @@
  */
 
 void
-proof_create(uint8_t challenge[64])
+proof_create(uint8_t challenge[32])
 {
-	randbytes(challenge, 64);
+	randbytes(challenge, 32);
 }
 
 static
@@ -57,39 +54,30 @@ check_zero_prefix(const uint8_t hash[64], uint8_t difficulty)
 }
 
 int
-proof_check(const uint8_t response[96], const uint8_t challenge[64],
+proof_check(const uint8_t response[96], const uint8_t challenge[32],
 		const uint8_t signing_key[32], uint8_t difficulty)
 {
 	uint8_t hash[64];
-	uint8_t *workarea = NULL;
-	uint8_t challenge_and_salt[96];
+	uint8_t challenge_and_salt[64];
 	int result = -1;
 
-	memcpy(challenge_and_salt,      challenge,     64);
-	memcpy(challenge_and_salt + 64, response + 64, 32);
-	displaykey("challenge_and_salt (recv'd)", challenge_and_salt, 96);
+	memcpy(challenge_and_salt,      challenge,     32);
+	memcpy(challenge_and_salt + 32, response + 64, 32);
+	displaykey("challenge_and_salt (recv'd)", challenge_and_salt, 64);
 
-	if (crypto_check(response, signing_key, challenge_and_salt, 96)) {
+	if (crypto_check(response, signing_key, challenge_and_salt, 64)) {
 		fprintf(stderr, "Failed signature\n");
 		goto end;
 	}
 
-	workarea = malloc(WORKAREA * 1024);
-	crypto_argon2i(
-		hash, 64,            /* hash output */
-		workarea, WORKAREA,  /* work area for memory hardness */
-		ITERATIONS,          /* number of iterations */
-		challenge, 64,       /* challenge value */
-		response + 64, 32);  /* client's proof of work */
-
+	crypto_blake2b(hash, challenge_and_salt, 64);
 	result = check_zero_prefix(hash, difficulty);
 	displaykey("hash", hash, 64);
 	if (result)
 		fprintf(stderr, "Failed zero prefix\n");
 
 end:
-	if (workarea)
-		free(workarea);
+	crypto_wipe(challenge_and_salt, 64);
 	crypto_wipe(hash, 64);
 
 	return result;
@@ -121,47 +109,42 @@ increment(uint8_t value[32])
 }
 
 void
-proof_solve(uint8_t response[96], const uint8_t challenge[64],
+proof_solve(uint8_t response[96], const uint8_t challenge[32],
 	const uint8_t signing_key[32], const uint8_t signing_key_prv[32],
 	uint8_t difficulty)
 {
-	uint8_t salt[32];
+	uint8_t challenge_and_salt[64];
+	uint8_t *salt = challenge_and_salt + 32;
 	uint8_t hash[64];
-	uint8_t *workarea = malloc(100 * 1024 * 1024);
+	uint32_t i = 0;
+
+	memcpy(challenge_and_salt, challenge, 32);
 
 	crypto_wipe(response, 96);
 	crypto_wipe(salt, 32);
 
-	displaykey("salt", salt, 32);
-
-	crypto_argon2i(
-		hash, 64,		/* hash output */
-		workarea, WORKAREA,	/* work area for memory hardness */
-		ITERATIONS,		/* number of iterations */
-		challenge, 64,		/* challenge value */
-		salt, 32);		/* client's proof of work */
+	crypto_blake2b(hash, challenge_and_salt, 64);
 	displaykey("hash", hash, 64);
 
 	while (check_zero_prefix(hash, difficulty)) {
+		i++;
 		increment(salt);
-		fprintf(stderr, "\033[F\033[F\033[F\033[F");
-		displaykey("salt", salt, 32);
+		crypto_blake2b(hash, challenge_and_salt, 64);
 
-		crypto_argon2i(
-			hash, 64,		/* hash output */
-			workarea, WORKAREA,	/* work area for memory hardness */
-			ITERATIONS,		/* number of iterations */
-			challenge, 64,		/* challenge value */
-			salt, 32);		/* client's proof of work */
-		displaykey("hash", hash, 64);
+		if (!(i % 9999)) {
+			fprintf(stderr, "\033[F\033[F\033[F\033[F");
+			displaykey("salt", salt, 32);
+			displaykey("hash", hash, 64);
+		}
 	}
 
+	fprintf(stderr, "\033[F\033[F\033[F\033[F");
+	displaykey("salt", salt, 32);
+	displaykey("hash", hash, 64);
+
 	{
-		uint8_t challenge_and_salt[96];
-		memcpy(challenge_and_salt,      challenge, 64);
-		memcpy(challenge_and_salt + 64, salt,      32);
-		displaykey("challenge_and_salt (to sign)", challenge_and_salt, 96);
-		crypto_sign(response, signing_key_prv, signing_key, challenge_and_salt, 96);
+		displaykey("challenge_and_salt (to sign)", challenge_and_salt, 64);
+		crypto_sign(response, signing_key_prv, signing_key, challenge_and_salt, 64);
 		memcpy(response + 64, salt, 32);
 		displaykey("response (signature || salt)", response, 96);
 	}
