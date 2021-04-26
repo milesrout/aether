@@ -106,11 +106,11 @@ client(int argc, char **argv)
 	struct mesg_state state;
 	const char *host, *port;
 
-	if (argc != 4)
+	if (argc < 2 || argc > 4)
 		usage();
 
-	host = argv[2];
-	port = argv[3];
+	host = argc < 3? "127.0.0.1" : argv[2];
+	port = argc < 4? "3443" : argv[3];
 
 	generate_sign_keypair(iskc, iskc_prv);
 	generate_kex_keypair(ikc, ikc_prv);
@@ -277,11 +277,11 @@ serve(int argc, char **argv)
 	uint8_t buf[65536];
 	const char *host, *port;
 
-	if (argc != 4)
+	if (argc < 2 || argc > 4)
 		usage();
 
-	host = argv[2];
-	port = argv[3];
+	host = argc < 3? "127.0.0.1" : argv[2];
+	port = argc < 4? "3443" : argv[3];
 
 	if (peertable_init(&peertable)) {
 		fprintf(stderr, "Couldn't initialise peer table.\n");
