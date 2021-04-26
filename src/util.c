@@ -47,7 +47,7 @@ generate_kex_keypair(uint8_t public_key[32], uint8_t private_key[32])
 }
 
 void
-generate_sign_keypair(uint8_t public_key[32], uint8_t private_key[32])
+generate_sig_keypair(uint8_t public_key[32], uint8_t private_key[32])
 {
 	randbytes(private_key, 32);
 	crypto_sign_public_key(public_key, private_key);

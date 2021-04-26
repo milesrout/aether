@@ -156,7 +156,7 @@ peer_del(struct peertable *pt, struct peer *p)
 
 	for (i = idx; pt->table[i] != NULL && (pt->table[i]->hash % pt->cap) == idx; i++) {
 		if (pt->table[i] == p) {
-			pt->table[i] = (struct peer *)&tombstone;
+			pt->table[i] = &tombstone;
 			pt->size--;
 			pt->tombs++;
 			return 0;

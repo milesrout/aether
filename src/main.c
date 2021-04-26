@@ -50,6 +50,13 @@ static void safe_write(int fd, const uint8_t *buf, size_t size);
 static size_t safe_read(int fd, uint8_t *buf, size_t size);
 static void usage(void);
 
+static
+struct sockaddr *
+sstosa(struct sockaddr_storage *ss)
+{
+	return (struct sockaddr *)ss;
+}
+
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
 
@@ -112,7 +119,7 @@ client(int argc, char **argv)
 	host = argc < 3? "127.0.0.1" : argv[2];
 	port = argc < 4? "3443" : argv[3];
 
-	generate_sign_keypair(iskc, iskc_prv);
+	generate_sig_keypair(iskc, iskc_prv);
 	generate_kex_keypair(ikc, ikc_prv);
 
 	fd = setclientup(host, port);
@@ -205,7 +212,7 @@ safe_recvfrom(int fd, uint8_t *buf, size_t max_size_p1,
 	do {
 		*peeraddr_len = sizeof(peeraddr);
 		nread = recvfrom(fd, buf, max_size_p1, 0,
-			(struct sockaddr *)peeraddr, peeraddr_len);
+			sstosa(peeraddr), peeraddr_len);
 	} while (nread == -1 && errno == EINTR);
 
 	if (nread == -1) {
@@ -326,7 +333,7 @@ serve(int argc, char **argv)
 		nread = safe_recvfrom(fd, buf, 65536,
 			&pi.addr, &pi.addr_len);
 
-		if (!getnameinfo((struct sockaddr *)&pi.addr, pi.addr_len,
+		if (!getnameinfo(sstosa(&pi.addr), pi.addr_len,
 				host, NI_MAXHOST,
 				service, NI_MAXSERV,
 				NI_NUMERICHOST|NI_NUMERICSERV)) {
@@ -338,7 +345,7 @@ serve(int argc, char **argv)
 
 		fprintf(stderr, "Received %zu bytes. ", nread);
 
-		peer = peer_getbyaddr(&peertable, (struct sockaddr *)&pi.addr, pi.addr_len);
+		peer = peer_getbyaddr(&peertable, sstosa(&pi.addr), pi.addr_len);
 		if (peer == NULL) {
 			fprintf(stderr, "Peer not found. ");
 			peer = peer_add(&peertable, &pi);
@@ -392,7 +399,8 @@ serve(int argc, char **argv)
 
 				mesg_hshake_dreply(&peer->state, buf);
 				safe_sendto(fd, buf, MESG_REPLY_SIZE,
-					(struct sockaddr *)&peer->addr, peer->addr_len);
+					sstosa(&peer->addr),
+					peer->addr_len);
 				crypto_wipe(buf, MESG_REPLY_SIZE);
 
 				peer->status = PEER_ACTIVE;
@@ -408,13 +416,14 @@ serve(int argc, char **argv)
 			if (mesg_unlock(&peer->state, buf, nread)) {
 				fprintf(stderr, "Couldn't decrypt message with size=%lu (text_size=%lu)\n",
 					nread, MESG_TEXT_SIZE(nread));
-				break;
+				continue;
 			}
-			displaykey("plain", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));
+
+
 
 			mesg_lock(&peer->state, buf, MESG_TEXT_SIZE(nread));
 			safe_sendto(fd, buf, nread,
-				(struct sockaddr *)&pi.addr, pi.addr_len);
+				sstosa(&pi.addr), pi.addr_len);
 			crypto_wipe(buf, nread);
 
 			continue;

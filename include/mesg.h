@@ -10,6 +10,9 @@ struct mesg {
 	struct mesghdr hdr;
 	uint8_t text[];
 };
+#define MESG_BUF_SIZE(size) ((size) + sizeof(struct mesg))
+#define MESG_TEXT_SIZE(size) ((size) - sizeof(struct mesg))
+#define MESG_TEXT(buf) ((buf) + offsetof(struct mesg, text))
 struct mesg_hshake_cstate {
 	uint8_t iskd[32];        /* daemon public identity (signing) key */
 	uint8_t ikd[32];         /* daemon public identity (key-xchg) key */
@@ -57,11 +60,18 @@ struct mesg_ratchet_state {
 	struct mesgkey_bucket *spare_buckets;  /* pools for these so we don't */
 	struct mesgkey        *spare_mesgkeys; /* need to constantly realloc  */
 };                                             /* them.  we DO need to wipe!  */
+struct mesg_ratchet_state_prerecv {
+	struct mesg_ratchet_state ra;
+	uint8_t eka[32];
+	uint8_t spkb[32];
+	uint8_t opkb[32];
+};
 struct mesg_state {
 	union {
 		struct mesg_hshake_cstate hsc;
 		struct mesg_hshake_dstate hsd;
 		struct mesg_ratchet_state ra;
+		struct mesg_ratchet_state_prerecv rap;
 	} u;
 };
 struct hshake_hello_msg {
@@ -81,12 +91,22 @@ struct hshake_reply_msg {
 	uint8_t cvc_sig[64]; /* signed by iskd */
 	uint8_t cvs[32];     /* server's challenge value */
 };
+struct hshake_ohello_msg {
+	uint8_t ika[32];
+	uint8_t eka[32];
+	uint8_t prekeys[8];
+	uint8_t message[MESG_BUF_SIZE(8)];
+};
 extern int mesg_example1(int fd);
 extern int mesg_example2(int fd);
+extern int mesg_example3(int fd);
+extern int mesg_example4(int fd);
 #define MESG_HELLO_SIZE sizeof(struct hshake_hello_msg)
 #define MESG_REPLY_SIZE sizeof(struct hshake_reply_msg)
+#define MESG_OHELLO_SIZE sizeof(struct hshake_ohello_msg)
 /* MESG_HSHAKE_SIZE = MAX( MESG_{HELLO,REPLY}_SIZE ) */
 #define MESG_HSHAKE_SIZE MESG_HELLO_SIZE
+#define MESG_HSHAKE_OSIZE MESG_OHELLO_SIZE
 extern void mesg_hshake_cprepare(struct mesg_state *state,
 	const uint8_t his_sign_public_key[32], const uint8_t his_kex_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
@@ -98,8 +118,5 @@ extern void mesg_hshake_dprepare(struct mesg_state *state,
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
 extern int mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE]);
 extern void mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE]);
-#define MESG_BUF_SIZE(size) ((size) + sizeof(struct mesg))
-#define MESG_TEXT_SIZE(size) ((size) - sizeof(struct mesg))
-#define MESG_TEXT(buf) ((buf) + offsetof(struct mesg, text))
 extern void mesg_lock(struct mesg_state *state, uint8_t *buf, size_t text_size);
 extern int mesg_unlock(struct mesg_state *state, uint8_t *buf, size_t buf_size);

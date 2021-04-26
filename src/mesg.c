@@ -32,17 +32,6 @@
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
 
-static void symm_ratchet(uint8_t mk[32], uint8_t ckn[32]);
-static void dh_ratchet(uint8_t rk[32], uint8_t ckn[32], uint8_t nhk[32], uint8_t dh[32]);
-
-static int try_decrypt_header(const struct mesg_ratchet_state *state, uint8_t hk[32], struct mesghdr *hdr);
-static int try_skipped_message_keys(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size);
-static int skip_message_keys(struct mesg_ratchet_state *state, uint32_t until);
-static int skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until);
-static int decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size, const uint8_t *ad);
-static int try_decrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size);
-static void encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size);
-
 /* prepares the message by advancing the state machine, preparing the header,
  * encryping the message in place and then encrypting the header in place.
  * the resulting struct mesg is ready to be sent over the wire.
@@ -78,12 +67,13 @@ static void encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg,
  */
 
 static const uint8_t hs_info[]   = "AetherwindHandshake";
+static const uint8_t ohs_info[]  = "AetherwindOfflineHandshake";
 static const uint8_t rep_info[]  = "AetherwindReplyHandshake";
 static const uint8_t symm_info[] = "AetherwindSymmetricRatchet";
 static const uint8_t dh_info[]   = "AetherwindDiffieHellmanRatchet";
 
 static const uint8_t zero_nonce[24];
-static const uint8_t missing_key[32];
+static const uint8_t zero_key[32];
 
 static struct mesgkey_bucket *spare_buckets = NULL;
 static struct mesgkey *spare_mesgkeys = NULL;
@@ -100,7 +90,45 @@ struct mesgkey_bucket {
 	struct mesgkey_bucket *next;
 };
 
-/* attempt to decrypt the header of an encrypted message 
+static
+void
+symm_ratchet(uint8_t mk[32], uint8_t ckn[32])
+{
+	uint8_t tmp[64 + sizeof(symm_info) + 1];
+
+	hkdf_blake2b(
+		tmp,       64,
+		NULL,      0,
+		symm_info, sizeof(symm_info),
+		ckn,       32);
+
+	memcpy(mk,  tmp,      32);
+	memcpy(ckn, tmp + 32, 32);
+
+	crypto_wipe(tmp, 64);
+}
+
+static
+void
+dh_ratchet(uint8_t rk[32], uint8_t ck[32], uint8_t nhk[32], uint8_t dh[32])
+{
+	uint8_t tmp[96 + sizeof(dh_info) + 1];
+
+	hkdf_blake2b(
+		tmp,     96,
+		rk,      32,
+		dh_info, sizeof(dh_info),
+		dh,      32);
+
+	memcpy(rk,  tmp,      32);
+	memcpy(ck,  tmp + 32, 32);
+	memcpy(nhk, tmp + 64, 32);
+
+	crypto_wipe(dh, 32);
+	crypto_wipe(tmp, 96);
+}
+
+/* attempt to decrypt the header of an encrypted message
  * mesg should be a struct mesg that has NOT had its header decrypted
  * hdrmac: valid
  * nonce:  valid
@@ -128,6 +156,43 @@ try_decrypt_header(const struct mesg_ratchet_state *state,
 		AD_SIZE,
 		hdr->msn,
 		sizeof(struct mesghdr) - offsetof(struct mesghdr, msn));
+}
+
+/* decrypt a partially decrypted message
+ * mesg should be a struct mesg that has had its header decrypted
+ * hdrmac: should have been wiped already
+ * nonce:  should have been wiped already
+ * msn:    valid
+ * pn:     valid
+ * pk:     valid
+ * mac:    valid
+ * text:   encrypted
+ *
+ * if the message was decrypted successfully, wipes mk and returns 0.
+ * otherwise returns -1;
+ */
+static
+int
+decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size,
+		const uint8_t *ad)
+{
+	int result;
+
+	result = crypto_unlock_aead(
+		mesg->text,
+		mk,
+		zero_nonce,
+		mesg->hdr.mac,
+		ad,
+		AD_SIZE,
+		mesg->text,
+		mesg_size);
+
+	if (result == 0) {
+		crypto_wipe(mk, 32);
+	}
+
+	return result;
 }
 
 static
@@ -248,22 +313,6 @@ mesgkey_create(struct mesg_ratchet_state *state)
 
 static
 int
-skip_message_keys(struct mesg_ratchet_state *state, uint32_t until)
-{
-	if (MAX_SKIP == 0)
-		return -1;
-
-	if (until >= (MAX_SKIP + 1) && state->nr >= until - (MAX_SKIP + 1))
-		return -1;
-
-	if (!crypto_verify32(state->ckr, missing_key) || state->nr >= until)
-		return 0;
-
-	return skip_message_keys_helper(state, until);
-}
-
-static
-int
 skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
 {
 	struct mesgkey *prev_mesgkey = NULL;
@@ -297,6 +346,22 @@ skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
 	}
 
 	return 0;
+}
+
+static
+int
+skip_message_keys(struct mesg_ratchet_state *state, uint32_t until)
+{
+	if (MAX_SKIP == 0)
+		return -1;
+
+	if (until >= (MAX_SKIP + 1) && state->nr >= until - (MAX_SKIP + 1))
+		return -1;
+
+	if (!crypto_verify32(state->ckr, zero_key) || state->nr >= until)
+		return 0;
+
+	return skip_message_keys_helper(state, until);
 }
 
 static
@@ -352,56 +417,6 @@ try_decrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t 
 	return result;
 }
 
-/* decrypt a partially decrypted message 
- * mesg should be a struct mesg that has had its header decrypted
- * hdrmac: should have been wiped already
- * nonce:  should have been wiped already
- * msn:    valid
- * pn:     valid
- * pk:     valid
- * mac:    valid
- * text:   encrypted
- *
- * if the message was decrypted successfully, wipes mk and returns 0.
- * otherwise returns -1;
- */
-static
-int
-decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size,
-		const uint8_t *ad)
-{
-	int result;
-
-	result = crypto_unlock_aead(
-		mesg->text,
-		mk,
-		zero_nonce,
-		mesg->hdr.mac,
-		ad,
-		AD_SIZE,
-		mesg->text,
-		mesg_size);
-
-	if (result == 0) {
-		crypto_wipe(mk, 32);
-	}
-
-	return result;
-}
-
-void
-mesg_lock(struct mesg_state *state, uint8_t *buf, size_t text_size)
-{
-	encrypt_message(&state->u.ra, (struct mesg *)buf, text_size);
-}
-
-int
-mesg_unlock(struct mesg_state *state, uint8_t *buf, size_t buf_size)
-{
-	return try_decrypt_message(&state->u.ra,
-		(struct mesg *)buf, buf_size - sizeof(struct mesg));
-}
-
 static
 void
 encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size)
@@ -420,7 +435,7 @@ encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg
 		mk,
 		zero_nonce, /* (each message is sent using a one-use secret key,
 		                so AEAD can use a constant nonce)
-			       (perhaps this should be some other constant to 
+			       (perhaps this should be some other constant to
 				provide domain separation?)*/
 		state->ad,
 		AD_SIZE,
@@ -446,44 +461,6 @@ encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg
 
 static
 void
-symm_ratchet(uint8_t mk[32], uint8_t ckn[32])
-{
-	uint8_t tmp[64 + sizeof(symm_info) + 1];
-
-	hkdf_blake2b(
-		tmp,       64,
-		NULL,      0,
-		symm_info, sizeof(symm_info),
-		ckn,       32);
-
-	memcpy(mk,  tmp,      32);
-	memcpy(ckn, tmp + 32, 32);
-
-	crypto_wipe(tmp, 64);
-}
-
-static
-void
-dh_ratchet(uint8_t rk[32], uint8_t ck[32], uint8_t nhk[32], uint8_t dh[32])
-{
-	uint8_t tmp[96 + sizeof(dh_info) + 1];
-
-	hkdf_blake2b(
-		tmp,     96,
-		rk,      32,
-		dh_info, sizeof(dh_info),
-		dh,      32);
-
-	memcpy(rk,  tmp,      32);
-	memcpy(ck,  tmp + 32, 32);
-	memcpy(nhk, tmp + 64, 32);
-
-	crypto_wipe(dh, 32);
-	crypto_wipe(tmp, 96);
-}
-
-static
-void
 hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 		uint8_t dh[128])
 {
@@ -501,6 +478,19 @@ hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 
 	crypto_wipe(dh, 128);
 	crypto_wipe(tmp, 96);
+}
+
+void
+mesg_lock(struct mesg_state *state, uint8_t *buf, size_t text_size)
+{
+	encrypt_message(&state->u.ra, (struct mesg *)buf, text_size);
+}
+
+int
+mesg_unlock(struct mesg_state *state, uint8_t *buf, size_t buf_size)
+{
+	return try_decrypt_message(&state->u.ra,
+		(struct mesg *)buf, buf_size - sizeof(struct mesg));
 }
 
 void
@@ -741,25 +731,143 @@ end:	crypto_wipe(ikc,    32);
 	return result;
 }
 
-#define MAX_SIZE 4096
+static
+void
+hash_prekeys(uint8_t prekeys[8], const uint8_t spkb[32], const uint8_t opkb[32])
+{
+	crypto_blake2b_general(prekeys, 4, NULL, 0, spkb, 32);
+	if (crypto_verify32(opkb, zero_key))
+		crypto_blake2b_general(prekeys + 4, 4, NULL, 0, opkb, 32);
+	else
+		memset(prekeys + 4, '\0', 4);
+}
+
+static
+void
+offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
+		uint8_t *dh, size_t dh_size)
+{
+	uint8_t tmp[96 + sizeof(ohs_info) + 1];
+
+	hkdf_blake2b(
+		tmp,      96,
+		NULL,     0,
+		ohs_info, sizeof(ohs_info),
+		dh,       dh_size);
+
+	memcpy(sk,  tmp,      32);
+	memcpy(hk,  tmp + 32, 32);
+	memcpy(nhk, tmp + 64, 32);
+
+	crypto_wipe(dh, dh_size);
+	crypto_wipe(tmp, 96);
+}
+
+static
+int
+mesg_hshake_aprepare(struct mesg_state *state,
+	const uint8_t ika[32], const uint8_t ika_prv[64],
+	      uint8_t eka[32],
+	const uint8_t iskb[32],
+	const uint8_t ikb[32], const uint8_t ikb_sig[64],
+	const uint8_t spkb[32], const uint8_t spkb_sig[64],
+	const uint8_t opkb[32])
+{
+	struct mesg_ratchet_state_prerecv *rap = &state->u.rap;
+	struct mesg_ratchet_state *ra = &rap->ra;
+	uint8_t dh[128];
+	uint8_t eka_prv[32];
+
+	if (check_key(iskb, "AHBI", ikb, ikb_sig))
+		return -1;
+	if (check_key(iskb, "AHBS", spkb, spkb_sig))
+		return -1;
+
+	generate_kex_keypair(eka, eka_prv);
+
+	memcpy(rap->eka,  eka,  32);
+	memcpy(rap->spkb, spkb, 32);
+	memcpy(rap->opkb, opkb, 32);
+
+	crypto_key_exchange(dh,      ika_prv, spkb);
+	crypto_key_exchange(dh + 32, eka_prv, ikb);
+	crypto_key_exchange(dh + 64, eka_prv, spkb);
+
+	if (opkb == NULL) {
+		offline_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh, 96);
+		crypto_wipe(dh, 96);
+	} else {
+		crypto_key_exchange(dh + 96, eka_prv, opkb);
+		offline_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh, 128);
+		crypto_wipe(dh, 128);
+	}
+	crypto_wipe(eka_prv, 32);
+
+	generate_kex_keypair(ra->dhks, ra->dhks_prv);
+	memcpy(ra->ad,      ika,           32);
+	memcpy(ra->ad + 32, ikb,           32);
+
+	crypto_key_exchange(dh, ra->dhks_prv, spkb);
+	dh_ratchet(ra->rk, ra->cks, ra->nhks, dh);
+	crypto_wipe(dh, 32);
+
+	return 0;
+}
 
 int
 mesg_example1(int fd)
 {
+	uint8_t iska[32], iska_prv[32];
+	uint8_t ika[32], ika_prv[64];
+	uint8_t eka[32];
+	/* obtained from server */
+	uint8_t iskb[32];
+	uint8_t ikb[32], ikb_sig[64];
+	uint8_t spkb[32], spkb_sig[64];
+	uint8_t opkb[32];
+	uint8_t buf[65536];
+	struct mesg_state state;
+	struct hshake_ohello_msg *msg = (struct hshake_ohello_msg *)buf;
+
+	if (mesg_hshake_aprepare(&state,
+			ika, ika_prv, eka,
+			iskb, ikb, ikb_sig, spkb, spkb_sig, opkb))
+		return -1;
+
+	/* create hello message */
+	memcpy(msg->ika, ika,             32);
+	memcpy(msg->eka, state.u.rap.eka, 32);
+	hash_prekeys(msg->prekeys, state.u.rap.spkb, state.u.rap.opkb);
+	mesg_lock(&state, msg->message, 8);
+
+	write(fd, buf, MESG_OHELLO_SIZE);
+
+	crypto_wipe(buf, MESG_OHELLO_SIZE);
+}
+
+int
+mesg_example2(int fd)
+{
+
+}
+
+int
+mesg_example3(int fd)
+{
 	/* These need to be obtained somehow */
-	uint8_t server_sign_public_key[32];
+	uint8_t server_sig_public_key[32];
 	uint8_t server_kex_public_key[32];
 	/* In reality these are long-term keys, not generated every time. */
 	uint8_t sign_public_key[32], sign_private_key[32];
 	uint8_t kex_public_key[32], kex_private_key[32];
 	struct mesg_state state;
 
-	memcpy(server_sign_public_key, isks, 32);
+	memcpy(server_sig_public_key, isks, 32);
 	(void)isks_prv;
-	memcpy(server_sign_public_key, iks, 32);
+	memcpy(server_kex_public_key, iks, 32);
 	(void)iks_prv;
 
-	generate_sign_keypair(sign_public_key, sign_private_key);
+	generate_sig_keypair(sign_public_key, sign_private_key);
 	generate_kex_keypair(kex_public_key, kex_private_key);
 
 	{
@@ -767,7 +875,7 @@ mesg_example1(int fd)
 
 		/* Prepare the message state for the first handshake message */
 		mesg_hshake_cprepare(&state,
-			server_sign_public_key, server_kex_public_key,
+			server_sig_public_key, server_kex_public_key,
 			sign_public_key, sign_private_key,
 			kex_public_key, kex_private_key);
 
@@ -795,14 +903,14 @@ mesg_example1(int fd)
 }
 
 int
-mesg_example2(int fd)
+mesg_example4(int fd)
 {
 	/* In reality these are long-term keys, not generated every time. */
 	uint8_t sign_public_key[32], sign_private_key[32];
 	uint8_t kex_public_key[32], kex_private_key[32];
 	struct mesg_state state;
 
-	generate_sign_keypair(sign_public_key, sign_private_key);
+	generate_sig_keypair(sign_public_key, sign_private_key);
 	generate_kex_keypair(kex_public_key, kex_private_key);
 
 	/* Prepare the message state as an online handshake replier */
