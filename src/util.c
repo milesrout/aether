@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <sys/random.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -5,6 +6,24 @@
 #include <string.h>
 #include "util.h"
 #include "monocypher.h"
+
+size_t
+floorlog2(size_t x)
+{
+	return sizeof(size_t) * CHAR_BIT - 1 - __builtin_clzl((size_t)(x));
+}
+
+size_t
+padme(size_t l)
+{
+	size_t e, s, last_bits, bit_mask;
+
+	e = floorlog2(l);
+	s = floorlog2(e) + 1;
+	last_bits = e - s;
+	bit_mask = ((uint64_t)-1L) >> (sizeof(size_t) * CHAR_BIT - last_bits);
+	return (l + bit_mask) & ~bit_mask;
+}
 
 void
 dumpbytes(const uint8_t *data, size_t size)

@@ -15,3 +15,5 @@ extern void sign_key(uint8_t sig[64],
 	const char name[4], const uint8_t key[32]);
 extern int check_key(const uint8_t isk[32], const char name[4],
 	const uint8_t key[32], const uint8_t sig[64]);
+extern size_t padme(size_t l);
+extern size_t floorlog2(size_t x);
