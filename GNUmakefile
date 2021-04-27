@@ -33,12 +33,12 @@ WARNINGS  += -Wimplicit-fallthrough=4 -Wstack-protector -Wmissing-include-dirs
 WARNINGS  += -Wshift-overflow=2 -Wswitch-default -Wswitch-enum
 WARNINGS  += -Wunused-parameter -Wunused-const-variable=2 -Wstrict-overflow=5
 WARNINGS  += -Wstringop-overflow=4 -Wstringop-truncation -Walloc-zero -Walloca
-WARNINGS  += -Warray-bounds -Wattribute-alias=2 -Wlogical-op
+WARNINGS  += -Warray-bounds=2 -Wattribute-alias=2 -Wlogical-op
 WARNINGS  += -Wduplicated-branches -Wduplicated-cond -Wtrampolines -Wfloat-equal
 WARNINGS  += -Wunsafe-loop-optimizations -Wbad-function-cast #-Wshadow
 WARNINGS  += -Wcast-qual -Wcast-align -Wwrite-strings #-Wconversion
 WARNINGS  += -Wpacked -Wdangling-else -Wparentheses #-Wsign-conversion
-WARNINGS  += -Wdate-time -Wjump-misses-init
+WARNINGS  += -Wdate-time -Wjump-misses-init -Wreturn-local-addr
 WARNINGS  += -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes
 WARNINGS  += -Wmissing-declarations -Wnormalized=nfkc -Wredundant-decls
 WARNINGS  += -Wnested-externs -fanalyzer
