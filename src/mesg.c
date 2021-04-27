@@ -763,11 +763,9 @@ offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 	crypto_wipe(tmp, 96);
 }
 
-static
 int
 mesg_hshake_aprepare(struct mesg_state *state,
 	const uint8_t ika[32], const uint8_t ika_prv[64],
-	      uint8_t eka[32],
 	const uint8_t iskb[32],
 	const uint8_t ikb[32], const uint8_t ikb_sig[64],
 	const uint8_t spkb[32], const uint8_t spkb_sig[64],
@@ -783,17 +781,15 @@ mesg_hshake_aprepare(struct mesg_state *state,
 	if (check_key(iskb, "AHBS", spkb, spkb_sig))
 		return -1;
 
-	generate_kex_keypair(eka, eka_prv);
+	generate_kex_keypair(rap->eka, eka_prv);
 
 	memcpy(rap->ika,  ika,  32);
-	memcpy(rap->eka,  eka,  32);
 	memcpy(rap->spkb, spkb, 32);
 	memcpy(rap->opkb, opkb, 32);
 
 	crypto_key_exchange(dh,      ika_prv, spkb);
 	crypto_key_exchange(dh + 32, eka_prv, ikb);
 	crypto_key_exchange(dh + 64, eka_prv, spkb);
-
 	if (opkb == NULL) {
 		offline_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh, 96);
 		crypto_wipe(dh, 96);
@@ -815,8 +811,6 @@ mesg_hshake_aprepare(struct mesg_state *state,
 	return 0;
 }
 
-
-static
 void
 mesg_hshake_ahello(struct mesg_state *state, uint8_t buf[MESG_P2PHELLO_SIZE])
 {
@@ -835,7 +829,6 @@ mesg_example1(int fd)
 {
 	uint8_t iska[32], iska_prv[32];
 	uint8_t ika[32], ika_prv[64];
-	uint8_t eka[32];
 	/* obtained from server */
 	uint8_t iskb[32];
 	uint8_t ikb[32], ikb_sig[64];
@@ -846,7 +839,7 @@ mesg_example1(int fd)
 
 	/* Prepare the message state for the first handshake message */
 	if (mesg_hshake_aprepare(&state,
-			ika, ika_prv, eka,
+			ika, ika_prv,
 			iskb, ikb, ikb_sig, spkb, spkb_sig, opkb))
 		return -1;
 

@@ -74,6 +74,20 @@ generate_sig_keypair(uint8_t public_key[32], uint8_t private_key[32])
 
 /* BEGIN: these are derived from monocypher directly */
 void
+store16_le(uint8_t out[2], uint16_t in)
+{
+    out[0] = (uint8_t)( in        & 0xff);
+    out[1] = (uint8_t)((in >>  8) & 0xff);
+}
+
+uint16_t
+load16_le(const uint8_t s[2])
+{
+    return (uint32_t)s[0]
+        | ((uint32_t)s[1] <<  8);
+}
+
+void
 store32_le(uint8_t out[4], uint32_t in)
 {
     out[0] = (uint8_t)( in        & 0xff);

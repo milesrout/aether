@@ -32,6 +32,7 @@
 #include "mesg.h"
 #include "peertable.h"
 #include "proof.h"
+#include "ident.h"
 
 static const char *progname;
 
@@ -98,6 +99,89 @@ setclientup(const char *addr, const char *port)
 	}
 
 	fprintf(stderr, "Couldn't connect to %s on port %s.\n", addr, port);
+	exit(EXIT_FAILURE);
+}
+
+static
+int
+alice(int argc, char **argv)
+{
+	int fd;
+	uint8_t iska[32], iska_prv[32];
+	uint8_t ika[32], ika_prv[32];
+	/* uint8_t iskb[32], iskb_prv[32]; */
+	/* uint8_t ikb[32], ikb_prv[32]; */
+	struct mesg_state state;
+	struct mesg_state p2pstate;
+	struct ident_state ident;
+	const char *host, *port;
+	uint8_t buf[65536];
+	size_t nread;
+
+	if (argc < 2 || argc > 4)
+		usage();
+
+	host = argc < 3? "127.0.0.1" : argv[2];
+	port = argc < 4? "3443" : argv[3];
+
+	generate_sig_keypair(iska, iska_prv);
+	generate_kex_keypair(ika, ika_prv);
+
+	fd = setclientup(host, port);
+
+	mesg_hshake_cprepare(&state, isks, iks, iska, iska_prv, ika, ika_prv);
+	mesg_hshake_chello(&state, buf);
+	safe_write(fd, buf, MESG_HELLO_SIZE);
+	crypto_wipe(buf, MESG_HELLO_SIZE);
+
+	nread = safe_read(fd, buf, MESG_REPLY_SIZE + 1);
+	if (nread != MESG_REPLY_SIZE) {
+		fprintf(stderr, "Received invalid reply from server.\n");
+		crypto_wipe(buf, MESG_REPLY_SIZE);
+		return -1;
+	}
+
+	if (mesg_hshake_cfinish(&state, buf)) {
+		fprintf(stderr, "Reply message cannot be decrypted.\n");
+		crypto_wipe(buf, MESG_REPLY_SIZE);
+		return -1;
+	}
+
+	crypto_wipe(buf, MESG_REPLY_SIZE);
+
+	ident_keyreq_msg_init(&ident, buf, ikb);
+	mesg_lock(&state, buf, IDENT_KEYREQ_MSG);
+	safe_write(fd, buf, MESG_BUF_SIZE(IDENT_KEYREQ_MSG));
+	crypto_wipe(buf, MESG_BUF_SIZE(IDENT_KEYREQ_MSG));
+	fprintf(stderr, "sent 24-byte message\n");
+
+	/* mesg_hshake_aprepare(&p2pstate, ika, ika_prv, */
+	/* 	iskb, ikb, ikb_sig, spkb, spkb_sig, opkb); */
+	memset(MESG_TEXT(buf), 0x77, 24);
+	mesg_lock(&state, buf, 24);
+
+	safe_write(fd, buf, MESG_BUF_SIZE(24));
+	crypto_wipe(buf, MESG_BUF_SIZE(24));
+	fprintf(stderr, "sent 24-byte message\n");
+
+	nread = safe_read(fd, buf, 65536);
+
+	while (nread != -1 && (size_t)nread > MESG_BUF_SIZE(1)) {
+		if (mesg_unlock(&state, buf, nread)) {
+			break;
+		}
+
+		if ((size_t)nread > MESG_BUF_SIZE(1)) {
+			mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - 1);
+			safe_write(fd, buf, nread - 1);
+			fprintf(stderr, "sent %lu-byte message\n", MESG_TEXT_SIZE(nread) - 1);
+		}
+
+		crypto_wipe(buf, 65536);
+
+		nread = safe_read(fd, buf, 65536);
+	}
+
 	exit(EXIT_FAILURE);
 }
 
@@ -502,6 +586,7 @@ main(int argc, char **argv)
 	switch (argv[1][0]) {
 		case 'k': keygen(argc, argv); break;
 		case 'p': proof(argc, argv); break;
+		case 'a': alice(argc, argv); break;
 		case 'c': client(argc, argv); break;
 		case 'd': serve(argc, argv); break;
 		default:  usage();
