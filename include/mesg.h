@@ -40,7 +40,7 @@ struct mesg_hshake_dstate {
 	uint8_t cvc[32];         /* challenge value from client */
 	uint8_t shared[32];      /* shared REPLY key */
 };
-struct mesg_ratchet_state {
+struct mesg_ratchet_state_common {
 	uint8_t dhkr[32];        /* public (DH) ratchet key (recv) */
 	uint8_t dhks[32];        /* public (DH) ratchet key (send) */
 	uint8_t dhks_prv[32];    /* private (DH) ratchet key (send) */
@@ -60,8 +60,12 @@ struct mesg_ratchet_state {
 	struct mesgkey_bucket *spare_buckets;  /* pools for these so we don't */
 	struct mesgkey        *spare_mesgkeys; /* need to constantly realloc  */
 };                                             /* them.  we DO need to wipe!  */
+struct mesg_ratchet_state {
+	struct mesg_ratchet_state_common rac;
+};
 struct mesg_ratchet_state_prerecv {
-	struct mesg_ratchet_state ra;
+	struct mesg_ratchet_state_common rac;
+	uint8_t ika[32];
 	uint8_t eka[32];
 	uint8_t spkb[32];
 	uint8_t opkb[32];
@@ -103,10 +107,10 @@ extern int mesg_example3(int fd);
 extern int mesg_example4(int fd);
 #define MESG_HELLO_SIZE sizeof(struct hshake_hello_msg)
 #define MESG_REPLY_SIZE sizeof(struct hshake_reply_msg)
-#define MESG_OHELLO_SIZE sizeof(struct hshake_ohello_msg)
+#define MESG_P2PHELLO_SIZE sizeof(struct hshake_ohello_msg)
 /* MESG_HSHAKE_SIZE = MAX( MESG_{HELLO,REPLY}_SIZE ) */
 #define MESG_HSHAKE_SIZE MESG_HELLO_SIZE
-#define MESG_HSHAKE_OSIZE MESG_OHELLO_SIZE
+#define MESG_HSHAKE_P2PSIZE MESG_P2PHELLO_SIZE
 extern void mesg_hshake_cprepare(struct mesg_state *state,
 	const uint8_t his_sign_public_key[32], const uint8_t his_kex_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],

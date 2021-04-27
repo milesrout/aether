@@ -144,7 +144,7 @@ dh_ratchet(uint8_t rk[32], uint8_t ck[32], uint8_t nhk[32], uint8_t dh[32])
  */
 static
 int
-try_decrypt_header(const struct mesg_ratchet_state *state,
+try_decrypt_header(const struct mesg_ratchet_state_common *ra,
 		uint8_t hk[32], struct mesghdr *hdr)
 {
 	return crypto_unlock_aead(
@@ -152,7 +152,7 @@ try_decrypt_header(const struct mesg_ratchet_state *state,
 		hk,
 		hdr->nonce,
 		hdr->hdrmac,
-		state->ad,
+		ra->ad,
 		AD_SIZE,
 		hdr->msn,
 		sizeof(struct mesghdr) - offsetof(struct mesghdr, msn));
@@ -197,17 +197,17 @@ decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size,
 
 static
 int
-try_skipped_message_keys(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size)
+try_skipped_message_keys(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
 {
 	struct mesgkey_bucket *prev_bucket, *bucket;
 	struct mesgkey *prev_mesgkey, *mesgkey;
 
 	prev_bucket = NULL;
-	bucket = state->skipped;
+	bucket = ra->skipped;
 
 	while (bucket != NULL) {
 
-		if (try_decrypt_header(state, bucket->hk, &mesg->hdr)) {
+		if (try_decrypt_header(ra, bucket->hk, &mesg->hdr)) {
 			goto outer_continue;
 		}
 
@@ -223,7 +223,7 @@ try_skipped_message_keys(struct mesg_ratchet_state *state, struct mesg *mesg, si
 			/* header decrypted and the correct msn */
 
 			/* attempt to decrypt the message */
-			if (decrypt_message(mesgkey->mk, mesg, mesg_size, state->ad))
+			if (decrypt_message(mesgkey->mk, mesg, mesg_size, ra->ad))
 				return -1;
 
 			/* if successful, remove the struct mesgkey from the
@@ -247,18 +247,18 @@ try_skipped_message_keys(struct mesg_ratchet_state *state, struct mesg *mesg, si
 			}
 
 			if (bucket->next != NULL) {
-				state->skipped = bucket->next;
+				ra->skipped = bucket->next;
 				goto detach_bucket;
 			}
 
 		detach_bucket:
 			crypto_wipe(bucket, sizeof(struct mesgkey_bucket));
-			bucket->next = state->spare_buckets;
-			state->spare_buckets = bucket;
+			bucket->next = ra->spare_buckets;
+			ra->spare_buckets = bucket;
 		detach_mesgkey:
 			crypto_wipe(mesgkey, sizeof(struct mesgkey));
-			mesgkey->next = state->spare_mesgkeys;
-			state->spare_mesgkeys = mesgkey;
+			mesgkey->next = ra->spare_mesgkeys;
+			ra->spare_mesgkeys = mesgkey;
 			return 0;
 
 		inner_continue:
@@ -275,12 +275,12 @@ try_skipped_message_keys(struct mesg_ratchet_state *state, struct mesg *mesg, si
 
 static
 struct mesgkey_bucket *
-bucket_create(struct mesg_ratchet_state *state)
+bucket_create(struct mesg_ratchet_state_common *ra)
 {
 	struct mesgkey_bucket *b;
 
-	if (NULL != (b = state->spare_buckets)) {
-		state->spare_buckets = b->next;
+	if (NULL != (b = ra->spare_buckets)) {
+		ra->spare_buckets = b->next;
 		return b;
 	}
 
@@ -294,12 +294,12 @@ bucket_create(struct mesg_ratchet_state *state)
 
 static
 struct mesgkey *
-mesgkey_create(struct mesg_ratchet_state *state)
+mesgkey_create(struct mesg_ratchet_state_common *ra)
 {
 	struct mesgkey *m;
 
-	if (NULL != (m = state->spare_mesgkeys)) {
-		state->spare_mesgkeys = m->next;
+	if (NULL != (m = ra->spare_mesgkeys)) {
+		ra->spare_mesgkeys = m->next;
 		return m;
 	}
 
@@ -313,21 +313,21 @@ mesgkey_create(struct mesg_ratchet_state *state)
 
 static
 int
-skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
+skip_message_keys_helper(struct mesg_ratchet_state_common *ra, uint32_t until)
 {
 	struct mesgkey *prev_mesgkey = NULL;
 	struct mesgkey_bucket *bucket;
 
-	bucket = bucket_create(state);
+	bucket = bucket_create(ra);
 	if (bucket == NULL)
 		return -1;
 
-	memcpy(bucket->hk, state->hkr, 32);
-	bucket->next = state->skipped;
-	state->skipped = bucket;
+	memcpy(bucket->hk, ra->hkr, 32);
+	bucket->next = ra->skipped;
+	ra->skipped = bucket;
 
-	while (state->nr < until) {
-		struct mesgkey *mesgkey = mesgkey_create(state);
+	while (ra->nr < until) {
+		struct mesgkey *mesgkey = mesgkey_create(ra);
 
 		if (mesgkey == NULL)
 			return -1;
@@ -338,11 +338,11 @@ skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
 			prev_mesgkey->next = mesgkey;
 		prev_mesgkey = mesgkey;
 
-		mesgkey->msn = state->nr;
-		symm_ratchet(mesgkey->mk, state->ckr);
+		mesgkey->msn = ra->nr;
+		symm_ratchet(mesgkey->mk, ra->ckr);
 		mesgkey->next = NULL;
 
-		state->nr++;
+		ra->nr++;
 	}
 
 	return 0;
@@ -350,84 +350,84 @@ skip_message_keys_helper(struct mesg_ratchet_state *state, uint32_t until)
 
 static
 int
-skip_message_keys(struct mesg_ratchet_state *state, uint32_t until)
+skip_message_keys(struct mesg_ratchet_state_common *ra, uint32_t until)
 {
 	if (MAX_SKIP == 0)
 		return -1;
 
-	if (until >= (MAX_SKIP + 1) && state->nr >= until - (MAX_SKIP + 1))
+	if (until >= (MAX_SKIP + 1) && ra->nr >= until - (MAX_SKIP + 1))
 		return -1;
 
-	if (!crypto_verify32(state->ckr, zero_key) || state->nr >= until)
+	if (!crypto_verify32(ra->ckr, zero_key) || ra->nr >= until)
 		return 0;
 
-	return skip_message_keys_helper(state, until);
+	return skip_message_keys_helper(ra, until);
 }
 
 static
 void
-step_receiver_ratchet(struct mesg_ratchet_state *state, struct mesghdr *hdr)
+step_receiver_ratchet(struct mesg_ratchet_state_common *ra, struct mesghdr *hdr)
 {
 	uint8_t dh[32];
 
-	state->pn = state->ns;
-	state->ns = 0;
-	state->nr = 0;
+	ra->pn = ra->ns;
+	ra->ns = 0;
+	ra->nr = 0;
 
-	memcpy(state->hks, state->nhks, 32);
-	memcpy(state->hkr, state->nhkr, 32);
+	memcpy(ra->hks, ra->nhks, 32);
+	memcpy(ra->hkr, ra->nhkr, 32);
 
-	memcpy(state->dhkr, hdr->pk, 32);
+	memcpy(ra->dhkr, hdr->pk, 32);
 
-	crypto_key_exchange(dh, state->dhks_prv, state->dhkr);
-	dh_ratchet(state->rk, state->ckr, state->nhkr, dh);
+	crypto_key_exchange(dh, ra->dhks_prv, ra->dhkr);
+	dh_ratchet(ra->rk, ra->ckr, ra->nhkr, dh);
 
-	generate_kex_keypair(state->dhks, state->dhks_prv);
-	crypto_key_exchange(dh, state->dhks_prv, state->dhkr);
-	dh_ratchet(state->rk, state->cks, state->nhks, dh);
+	generate_kex_keypair(ra->dhks, ra->dhks_prv);
+	crypto_key_exchange(dh, ra->dhks_prv, ra->dhkr);
+	dh_ratchet(ra->rk, ra->cks, ra->nhks, dh);
 
 	crypto_wipe(dh, 32);
 }
 
 static
 int
-try_decrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size)
+try_decrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
 {
 	uint8_t mk[32];
 	int result;
 
-	if (!try_skipped_message_keys(state, mesg, mesg_size))
+	if (!try_skipped_message_keys(ra, mesg, mesg_size))
 		return 0;
 
-	if (try_decrypt_header(state, state->hkr, &mesg->hdr)) {
-		if (try_decrypt_header(state, state->nhkr, &mesg->hdr))
+	if (try_decrypt_header(ra, ra->hkr, &mesg->hdr)) {
+		if (try_decrypt_header(ra, ra->nhkr, &mesg->hdr))
 			return -1;
-		if (skip_message_keys(state, load32_le(mesg->hdr.pn)))
+		if (skip_message_keys(ra, load32_le(mesg->hdr.pn)))
 			return -1;
-		step_receiver_ratchet(state, &mesg->hdr);
+		step_receiver_ratchet(ra, &mesg->hdr);
 	}
-	if (skip_message_keys(state, load32_le(mesg->hdr.msn)))
+	if (skip_message_keys(ra, load32_le(mesg->hdr.msn)))
 		return -1;
 
-	symm_ratchet(mk, state->ckr);
-	state->nr++;
+	symm_ratchet(mk, ra->ckr);
+	ra->nr++;
 
-	result = decrypt_message(mk, mesg, mesg_size, state->ad);
+	result = decrypt_message(mk, mesg, mesg_size, ra->ad);
 	crypto_wipe(mk, 32);
 	return result;
 }
 
 static
 void
-encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg_size)
+encrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
 {
 	uint8_t mk[32];
 
-	symm_ratchet(mk, state->cks);
+	symm_ratchet(mk, ra->cks);
 
-	store32_le(mesg->hdr.msn, state->ns);
-	store32_le(mesg->hdr.pn, state->pn);
-	memcpy(mesg->hdr.pk, state->dhks, 32);
+	store32_le(mesg->hdr.msn, ra->ns);
+	store32_le(mesg->hdr.pn, ra->pn);
+	memcpy(mesg->hdr.pk, ra->dhks, 32);
 
 	crypto_lock_aead(
 		mesg->hdr.mac,
@@ -437,7 +437,7 @@ encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg
 		                so AEAD can use a constant nonce)
 			       (perhaps this should be some other constant to
 				provide domain separation?)*/
-		state->ad,
+		ra->ad,
 		AD_SIZE,
 		mesg->text,
 		mesg_size);
@@ -447,16 +447,16 @@ encrypt_message(struct mesg_ratchet_state *state, struct mesg *mesg, size_t mesg
 	crypto_lock_aead(
 		mesg->hdr.hdrmac,
 		mesg->hdr.msn,
-		state->hks,
+		ra->hks,
 		mesg->hdr.nonce,
-		state->ad,
+		ra->ad,
 		AD_SIZE,
 		mesg->hdr.msn,
 		sizeof(struct mesghdr) - offsetof(struct mesghdr, msn));
 
 	crypto_wipe(mk, 32);
 
-	state->ns++;
+	ra->ns++;
 }
 
 static
@@ -483,13 +483,13 @@ hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 void
 mesg_lock(struct mesg_state *state, uint8_t *buf, size_t text_size)
 {
-	encrypt_message(&state->u.ra, (struct mesg *)buf, text_size);
+	encrypt_message(&state->u.ra.rac, (struct mesg *)buf, text_size);
 }
 
 int
 mesg_unlock(struct mesg_state *state, uint8_t *buf, size_t buf_size)
 {
-	return try_decrypt_message(&state->u.ra,
+	return try_decrypt_message(&state->u.ra.rac,
 		(struct mesg *)buf, buf_size - sizeof(struct mesg));
 }
 
@@ -622,7 +622,7 @@ void
 mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 {
 	struct mesg_hshake_dstate *hsd = &state->u.hsd;
-	struct mesg_ratchet_state *ra = &state->u.ra;
+	struct mesg_ratchet_state_common *ra = &state->u.ra.rac;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh[128];
 	uint8_t ikc[32], ikd[32], ekd_prv[32];
@@ -688,7 +688,7 @@ int
 mesg_hshake_cfinish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 {
 	struct mesg_hshake_cstate *hsc = &state->u.hsc;
-	struct mesg_ratchet_state *ra = &state->u.ra;
+	struct mesg_ratchet_state_common *ra = &state->u.ra.rac;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh_hs[128];
 	uint8_t dh_ra[32];
@@ -774,7 +774,7 @@ mesg_hshake_aprepare(struct mesg_state *state,
 	const uint8_t opkb[32])
 {
 	struct mesg_ratchet_state_prerecv *rap = &state->u.rap;
-	struct mesg_ratchet_state *ra = &rap->ra;
+	struct mesg_ratchet_state_common *ra = &rap->rac;
 	uint8_t dh[128];
 	uint8_t eka_prv[32];
 
@@ -785,6 +785,7 @@ mesg_hshake_aprepare(struct mesg_state *state,
 
 	generate_kex_keypair(eka, eka_prv);
 
+	memcpy(rap->ika,  ika,  32);
 	memcpy(rap->eka,  eka,  32);
 	memcpy(rap->spkb, spkb, 32);
 	memcpy(rap->opkb, opkb, 32);
@@ -814,6 +815,21 @@ mesg_hshake_aprepare(struct mesg_state *state,
 	return 0;
 }
 
+
+static
+void
+mesg_hshake_ahello(struct mesg_state *state, uint8_t buf[MESG_P2PHELLO_SIZE])
+{
+	struct hshake_ohello_msg *msg = (struct hshake_ohello_msg *)buf;
+	struct mesg_ratchet_state_prerecv *rap = &state->u.rap;
+
+	/* create hello message */
+	memcpy(msg->ika, rap->ika, 32);
+	memcpy(msg->eka, rap->eka, 32);
+	hash_prekeys(msg->prekeys, rap->spkb, rap->opkb);
+	mesg_lock(state, msg->message, 8);
+}
+
 int
 mesg_example1(int fd)
 {
@@ -827,22 +843,21 @@ mesg_example1(int fd)
 	uint8_t opkb[32];
 	uint8_t buf[65536];
 	struct mesg_state state;
-	struct hshake_ohello_msg *msg = (struct hshake_ohello_msg *)buf;
 
+	/* Prepare the message state for the first handshake message */
 	if (mesg_hshake_aprepare(&state,
 			ika, ika_prv, eka,
 			iskb, ikb, ikb_sig, spkb, spkb_sig, opkb))
 		return -1;
 
-	/* create hello message */
-	memcpy(msg->ika, ika,             32);
-	memcpy(msg->eka, state.u.rap.eka, 32);
-	hash_prekeys(msg->prekeys, state.u.rap.spkb, state.u.rap.opkb);
-	mesg_lock(&state, msg->message, 8);
+	/* Create the P2PHELLO (OFFLINE-HELLO) message and update state */
+	mesg_hshake_ahello(&state, buf);
 
-	write(fd, buf, MESG_OHELLO_SIZE);
+	/* Write the P2PHELLO message out to a socket */
+	write(fd, buf, MESG_P2PHELLO_SIZE);
 
-	crypto_wipe(buf, MESG_OHELLO_SIZE);
+	/* Wipe the P2PHELLO message now it has been sent */
+	crypto_wipe(buf, MESG_P2PHELLO_SIZE);
 }
 
 int
