@@ -13,6 +13,7 @@ struct mesg {
 #define MESG_BUF_SIZE(size) ((size) + sizeof(struct mesg))
 #define MESG_TEXT_SIZE(size) ((size) - sizeof(struct mesg))
 #define MESG_TEXT(buf) ((buf) + offsetof(struct mesg, text))
+#define MESG_HDR(buf) ((struct mesghdr *)(buf))
 struct mesg_hshake_cstate {
 	uint8_t iskd[32];        /* daemon public identity (signing) key */
 	uint8_t ikd[32];         /* daemon public identity (key-xchg) key */
@@ -34,6 +35,7 @@ struct mesg_hshake_dstate {
 	uint8_t ikd_prv[32];     /* daemon private identity (key-xchg) key */
 	uint8_t ekd[32];         /* daemon public ephemeral (key-xchg) key */
 	uint8_t ekd_prv[32];     /* daemon private ephemeral (key-xchg) key */
+	uint8_t iskc[32];        /* client public identity (signing) key */
 	uint8_t ikc[32];         /* client public identity (key-xchg) key */
 	uint8_t ekc[32];         /* client public ephemeral (key-xchg) key */
 	uint8_t cvd[32];         /* challenge value from daemon */
@@ -63,8 +65,13 @@ struct mesg_ratchet_state_common {
 struct mesg_ratchet_state {
 	struct mesg_ratchet_state_common rac;
 };
-struct mesg_ratchet_state_prerecv {
+struct mesg_ratchet_dstate {
 	struct mesg_ratchet_state_common rac;
+	uint8_t iskc[32];
+};
+struct mesg_ratchet_astate_prerecv {
+	struct mesg_ratchet_state_common rac;
+	uint8_t hk[32];
 	uint8_t ika[32];
 	uint8_t eka[32];
 	uint8_t spkb[32];
@@ -75,17 +82,18 @@ struct mesg_state {
 		struct mesg_hshake_cstate hsc;
 		struct mesg_hshake_dstate hsd;
 		struct mesg_ratchet_state ra;
-		struct mesg_ratchet_state_prerecv rap;
+		struct mesg_ratchet_dstate rad;
+		struct mesg_ratchet_astate_prerecv rap;
 	} u;
 };
 struct hshake_hello_msg {
 	uint8_t hidden[32];
 	uint8_t mac[16];
 	uint8_t iskc[32];    /* client's long-term key-signing (identity) key */
-	uint8_t ikc[32];     /* client's long-term key-exchng. (identity) key */
+	/* uint8_t ikc[32];     /1* client's long-term key-exchng. (identity) key *1/ */
 	uint8_t ekc[32];     /* client's ephemeral key-exchange key */
 	uint8_t cvc[32];     /* client's challenge value */
-	uint8_t ikc_sig[64]; /* signed by iskc */
+	/* uint8_t ikc_sig[64]; /1* signed by iskc *1/ */
 	uint8_t ekc_sig[64]; /* signed by iskc */
 };
 struct hshake_reply_msg {
@@ -96,28 +104,36 @@ struct hshake_reply_msg {
 	uint8_t cvs[32];     /* server's challenge value */
 };
 struct hshake_ohello_msg {
-	uint8_t ika[32];
+	uint8_t mac[16];
+	uint8_t nonce[24];
+	uint8_t msgtype;
+	/* uint8_t ika[32]; */
 	uint8_t eka[32];
-	uint8_t prekeys[8];
-	uint8_t message[MESG_BUF_SIZE(8)];
+	/* uint8_t prekeys[8]; */
+	uint8_t message[];
 };
+struct hshake_omsg_msg {
+	uint8_t msgtype;
+	uint8_t message[];
+};
+#define MESG_OHELLO_TEXT(buf) ((buf) + offsetof(struct hshake_ohello_msg, message))
 extern int mesg_example1(int fd);
 extern int mesg_example2(int fd);
 extern int mesg_example3(int fd);
 extern int mesg_example4(int fd);
 #define MESG_HELLO_SIZE sizeof(struct hshake_hello_msg)
 #define MESG_REPLY_SIZE sizeof(struct hshake_reply_msg)
-#define MESG_P2PHELLO_SIZE sizeof(struct hshake_ohello_msg)
+#define MESG_P2PHELLO_SIZE(n) (sizeof(struct hshake_ohello_msg) + (n))
 /* MESG_HSHAKE_SIZE = MAX( MESG_{HELLO,REPLY}_SIZE ) */
 #define MESG_HSHAKE_SIZE MESG_HELLO_SIZE
 #define MESG_HSHAKE_P2PSIZE MESG_P2PHELLO_SIZE
 extern int mesg_hshake_aprepare(struct mesg_state *state,
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[64],
 	const uint8_t his_sign_public_key[32],
-	const uint8_t his_public_key[32], const uint8_t his_public_key_sig[64],
+	const uint8_t his_public_key[32], /*const uint8_t his_public_key_sig[64],*/
 	const uint8_t his_signed_prekey[32], const uint8_t his_signed_prekey_sig[64],
 	const uint8_t his_onetime_prekey[32]);
-extern void mesg_hshake_ahello(struct mesg_state *state, uint8_t buf[MESG_P2PHELLO_SIZE]);
+extern void mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize);
 extern void mesg_hshake_cprepare(struct mesg_state *state,
 	const uint8_t his_sign_public_key[32], const uint8_t his_kex_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],

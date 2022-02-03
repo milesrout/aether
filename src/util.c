@@ -41,6 +41,14 @@ displaykey(const char *name, const uint8_t *key, size_t size)
 }
 
 void
+displaykey_short(const char *name, const uint8_t *key, size_t size)
+{
+	fprintf(stderr, "%s:\t", name);
+	dumpbytes(key, size);
+	fprintf(stderr, "\n");
+}
+
+void
 randbytes(uint8_t *data, size_t size)
 {
 	ssize_t result, ssize = size;

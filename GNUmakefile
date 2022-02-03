@@ -1,7 +1,7 @@
 ifeq ($(BUILD),release)
 	CFLAGS += -O3 -s -D_FORTIFY_SOURCE=2 -DNDEBUG -fno-delete-null-pointer-checks -march=native
 else ifeq ($(BUILD),valgrind)
-	CFLAGS += -Og -g -Werror -DÆTHER_USE_VALGRIND
+	CFLAGS += -Og -g -DÆTHER_USE_VALGRIND #-Werror 
 else ifeq ($(BUILD),sanitise)
 	CFLAGS += -Og -g -fsanitize=address -fsanitize=undefined #-Werror 
 	LDFLAGS += -lasan -lubsan
@@ -44,7 +44,7 @@ WARNINGS  += -Wmissing-declarations -Wnormalized=nfkc -Wredundant-decls
 WARNINGS  += -Wnested-externs -fanalyzer
 
 CFLAGS    += -D_GNU_SOURCE $(INCS) -MMD -MP -std=c99
-CFLAGS    += -fPIE -ftrapv -fstack-protector $(WARNINGS)
+CFLAGS    += -fPIE -ftrapv -fstack-protector -fno-strict-aliasing $(WARNINGS)
 
 LDFLAGS   += -pie -fPIE
 LDLIBS    += -lm

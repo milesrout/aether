@@ -1,5 +1,6 @@
 extern void dumpbytes(const uint8_t *, size_t);
 extern void displaykey(const char *, const uint8_t *, size_t);
+extern void displaykey_short(const char *, const uint8_t *, size_t);
 extern void randbytes(uint8_t *, size_t);
 extern void generate_hidden_keypair(uint8_t hidden_key[32], uint8_t private_key[32]);
 extern void generate_kex_keypair(uint8_t public_key[32], uint8_t private_key[32]);

@@ -121,7 +121,7 @@ proof_solve(uint8_t response[96], const uint8_t challenge[32],
 	memcpy(challenge_and_salt, challenge, 32);
 
 	crypto_wipe(response, 96);
-	crypto_wipe(salt, 32);
+	randbytes(salt, 32);
 
 	crypto_blake2b(hash, challenge_and_salt, 64);
 	displaykey("hash", hash, 64);
@@ -142,10 +142,8 @@ proof_solve(uint8_t response[96], const uint8_t challenge[32],
 	displaykey("salt", salt, 32);
 	displaykey("hash", hash, 64);
 
-	{
-		displaykey("challenge_and_salt (to sign)", challenge_and_salt, 64);
-		crypto_sign(response, signing_key_prv, signing_key, challenge_and_salt, 64);
-		memcpy(response + 64, salt, 32);
-		displaykey("response (signature || salt)", response, 96);
-	}
+	displaykey("challenge_and_salt (to sign)", challenge_and_salt, 64);
+	crypto_sign(response, signing_key_prv, signing_key, challenge_and_salt, 64);
+	memcpy(response + 64, salt, 32);
+	displaykey("response (signature || salt)", response, 96);
 }
