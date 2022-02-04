@@ -1,0 +1,18 @@
+The ÆW.QUORUM protocol is used multi-party decision making.  It is mainly used
+to make decisions about groups.  Groups in the Ætherwind protocol may have more
+than one owner.  Those that do may have some kind of 'quorum' requirement for
+different administrative decisions.  For example, it may be possible for any
+owner to invite a new member to the group.  However, it might require a
+majority of the owners to agree to demote another owner.  This requires some
+kind of protocol for establishing the (multi-party) authenticity of "orders" of
+the owners to add/remove/promote/demote users, etc.  ÆW.QUORUM is that
+protocol.
+
+The QUORUM protocol may be thought of as a black box.  It is parameterised by a
+set of *n* participants and a threshold value *1 ≤ t ≤ n*, and consists of *n*
+secret values *s_i* that together represent a shared secret key *s*, along with
+a public key *P*. It takes as input a message *m* and produces as an output a
+signature *S* of *m* if and only if at least *t* participants approve the
+signing of *m*.  The signature *S* is indistinguishable from a single-party
+Ed25519 signature as used elsewhere in ÆW. The signature *S* can be verified
+using the public key *P*.
