@@ -43,70 +43,75 @@ struct ident_keyreq_msg {
 struct ident_keyreq_reply_msg {
 	uint8_t msgtype;
 	uint8_t msn[4];
-	/* uint8_t ik[32]; */
-	/* uint8_t ik_sig[64]; */
 	uint8_t spk[32];
 	uint8_t spk_sig[64];
 	uint8_t opk[32];
 };
-#define IDENT_REGISTER_MSG_BASE_SIZE (sizeof(struct ident_register_msg))
-#define IDENT_REGISTER_MSG_SIZE(n) (IDENT_REGISTER_MSG_BASE_SIZE + (n) + 1)
 struct ident_register_msg {
 	uint8_t msgtype;
 	uint8_t username_len;
 	uint8_t username[];
 };
-#define IDENT_REGISTER_ACK_SIZE (sizeof(struct ident_register_ack_msg))
+#define IDENT_REGISTER_MSG_BASE_SIZE (sizeof(struct ident_register_msg))
+#define IDENT_REGISTER_MSG_SIZE(n) (IDENT_REGISTER_MSG_BASE_SIZE + (n) + 1)
 struct ident_register_ack_msg {
 	uint8_t msgtype;
 	uint8_t msn[4];
 	uint8_t result;
 };
-#define IDENT_LOOKUP_MSG_BASE_SIZE (sizeof(struct ident_lookup_msg))
-#define IDENT_LOOKUP_MSG_SIZE(n) (IDENT_LOOKUP_MSG_BASE_SIZE + (n) + 1)
+#define IDENT_REGISTER_ACK_SIZE (sizeof(struct ident_register_ack_msg))
 struct ident_lookup_msg {
 	uint8_t msgtype;
 	uint8_t username_len;
 	uint8_t username[];
 };
+#define IDENT_LOOKUP_MSG_BASE_SIZE (sizeof(struct ident_lookup_msg))
+#define IDENT_LOOKUP_MSG_SIZE(n) (IDENT_LOOKUP_MSG_BASE_SIZE + (n) + 1)
 struct ident_lookup_reply_msg {
 	uint8_t msgtype;
 	uint8_t msn[4];
 	uint8_t isk[32];
 };
-#define IDENT_FORWARD_MSG_BASE_SIZE (sizeof(struct ident_forward_msg))
-#define IDENT_FORWARD_MSG_SIZE(n) (IDENT_FORWARD_MSG_BASE_SIZE + (n))
 struct ident_forward_msg {
 	uint8_t msgtype;
 	uint8_t isk[32];
 	uint8_t message_count;
 	uint8_t messages[];
 };
-#define IDENT_FORWARD_ACK_SIZE (sizeof(struct ident_forward_ack_msg))
+#define IDENT_FORWARD_MSG_BASE_SIZE (sizeof(struct ident_forward_msg))
+#define IDENT_FORWARD_MSG_SIZE(n) (IDENT_FORWARD_MSG_BASE_SIZE + (n))
 struct ident_forward_ack_msg {
 	uint8_t msgtype;
 	uint8_t msn[4];
 	uint8_t result;
 };
-#define IDENT_FETCH_MSG_BASE_SIZE (sizeof(struct ident_fetch_msg))
-#define IDENT_FETCH_MSG_SIZE(n) (IDENT_FETCH_MSG_BASE_SIZE + (n) + 1)
+#define IDENT_FORWARD_ACK_SIZE (sizeof(struct ident_forward_ack_msg))
 struct ident_fetch_msg {
 	uint8_t msgtype;
 };
+#define IDENT_FETCH_MSG_BASE_SIZE (sizeof(struct ident_fetch_msg))
+#define IDENT_FETCH_MSG_SIZE(n) (IDENT_FETCH_MSG_BASE_SIZE + (n) + 1)
 struct ident_fetch_reply_msg {
 	uint8_t msgtype;
 	uint8_t msn[4];
 	uint8_t message_count;
 	uint8_t messages[];
 };
+struct key {
+	uint8_t data[32];
+};
+struct keypair {
+	struct key key;
+	uint8_t prv[32];
+	uint8_t sig[64];
+};
 struct ident_state {
 	uint8_t isk[32];
 	uint8_t isk_prv[32];
 	uint8_t ik[32];
 	uint8_t ik_prv[32];
-	uint8_t opk_prvs[32][32];
-	uint8_t spk_prv[32];
-	uint8_t oldspk_prv[32];
+	struct keypair *opks;
+	struct keypair *spks;
 };
 struct client_ident_state {
 	uint8_t isk[32];

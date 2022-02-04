@@ -14,6 +14,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <assert.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -27,16 +28,24 @@
 #include <unistd.h>
 
 #include "monocypher.h"
+#define STBDS_NO_SHORT_NAMES
+#include "stb_ds.h"
+
 #include "hkdf.h"
 #include "util.h"
 #include "mesg.h"
 #include "peertable.h"
 #include "proof.h"
 #include "ident.h"
-#define STBDS_NO_SHORT_NAMES
-#include "stb_ds.h"
+#include "io.h"
+#include "main.h"
+
+/* TODO: discover through DNS or HTTPS or something */
+#include "isks.h"
 
 static const char *progname;
+static const uint8_t ohs_info[]  = "AetherwindOfflineHandshake";
+static uint8_t zero_key[32] = {0};
 
 /* A note on terminology.
  *
@@ -48,276 +57,6 @@ static const char *progname;
  * vs.
  * secret key: exclusively refers to _symmetric_ secret keys.
  */
-
-static void safe_write(int fd, const uint8_t *buf, size_t size);
-static size_t safe_read(int fd, uint8_t *buf, size_t size);
-static size_t safe_read_nonblock(int fd, uint8_t *buf, size_t size);
-static int handle_replies(int fd, uint8_t buf[65536], struct mesg_state *state, int minreplies);
-static void usage(void);
-
-static
-struct sockaddr *
-sstosa(struct sockaddr_storage *ss)
-{
-	return (struct sockaddr *)ss;
-}
-
-/* TODO: discover through DNS or HTTPS or something */
-#include "isks.h"
-
-static
-int
-setclientup(const char *addr, const char *port)
-{
-	struct addrinfo hints, *result, *rp;
-	int fd = -1, gai;
-
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_DGRAM;
-
-	gai = getaddrinfo(addr, port, &hints, &result);
-	if (gai != 0) {
-		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(gai));
-		exit(EXIT_FAILURE);
-	}
-
-	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-		if (fd == -1)
-			continue;
-
-		if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1) {
-			freeaddrinfo(result);
-			return fd;
-		}
-
-		close(fd);
-	}
-
-	freeaddrinfo(result);
-
-	if (rp == NULL) {
-		fprintf(stderr, "Couldn't bind to socket.\n");
-		exit(EXIT_FAILURE);
-	}
-
-	fprintf(stderr, "Couldn't connect to %s on port %s.\n", addr, port);
-	exit(EXIT_FAILURE);
-}
-
-static
-int
-alice(int argc, char **argv)
-{
-	int fd;
-	uint8_t iska[32], iska_prv[32];
-	uint8_t ika[32], ika_prv[32];
-	uint8_t iskb[32], ikb[32], spkb[32], opkb[32];
-	uint8_t ikb_sig[64], spkb_sig[64];
-	struct mesg_state state;
-	struct mesg_state p2pstate;
-	struct ident_state ident;
-	const char *host, *port;
-	uint8_t buf[65536];
-	size_t nread, size;
-
-	if (argc < 2 || argc > 4)
-		usage();
-
-	host = argc < 3? "127.0.0.1" : argv[2];
-	port = argc < 4? "3443" : argv[3];
-
-	generate_sig_keypair(iska, iska_prv);
-	/* generate_kex_keypair(ika, ika_prv); */
-	crypto_from_eddsa_public(ika,      iska);
-	crypto_from_eddsa_private(ika_prv, iska_prv);
-
-	fd = setclientup(host, port);
-
-	mesg_hshake_cprepare(&state, isks, iks, iska, iska_prv, ika, ika_prv);
-	mesg_hshake_chello(&state, buf);
-	safe_write(fd, buf, MESG_HELLO_SIZE);
-	crypto_wipe(buf, MESG_HELLO_SIZE);
-
-	nread = safe_read(fd, buf, MESG_REPLY_SIZE + 1);
-	if (nread != MESG_REPLY_SIZE) {
-		fprintf(stderr, "Received invalid reply from server.\n");
-		crypto_wipe(buf, MESG_REPLY_SIZE);
-		return -1;
-	}
-
-	if (mesg_hshake_cfinish(&state, buf)) {
-		fprintf(stderr, "Reply message cannot be decrypted.\n");
-		crypto_wipe(buf, MESG_REPLY_SIZE);
-		return -1;
-	}
-
-	crypto_wipe(buf, MESG_REPLY_SIZE);
-
-	size = ident_lookup_msg_init(&ident, MESG_TEXT(buf), "bob");
-	mesg_lock(&state, buf, size);
-	safe_write(fd, buf, MESG_BUF_SIZE(size));
-	crypto_wipe(buf, MESG_BUF_SIZE(size));
-	fprintf(stderr, "sent %lu-byte (%lu-byte) lookup message\n",
-		size, MESG_BUF_SIZE(size));
-
-	nread = safe_read(fd, buf, 65536);
-	if (nread < MESG_BUF_SIZE(0)) {
-		fprintf(stderr, "Received a message that is too small.\n");
-		crypto_wipe(buf, nread);
-		return -1;
-	}
-	displaykey("buf", buf, nread);
-	if (mesg_unlock(&state, buf, nread)) {
-		fprintf(stderr, "Message cannot be decrypted.\n");
-		crypto_wipe(buf, nread);
-		return -1;
-	}
-	displaykey("buf (decrypted)", buf, nread);
-	displaykey("text", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));
-
-	{
-		struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)MESG_TEXT(buf);
-		if (MESG_TEXT_SIZE(nread) != sizeof *msg) {
-			fprintf(stderr, "Identity lookup reply message (%lu) is too small (%lu).\n",
-				MESG_TEXT_SIZE(nread), sizeof *msg);
-			crypto_wipe(buf, nread);
-			return -1;
-		}
-		if (msg->msgtype != IDENT_LOOKUP_REP) {
-			fprintf(stderr, "Identity lookup reply message has invalid msgtype (%d).\n",
-				msg->msgtype);
-			crypto_wipe(buf, nread);
-			return -1;
-		}
-
-		memcpy(iskb, msg->isk, 32);
-	}
-
-	size = ident_keyreq_msg_init(&ident, MESG_TEXT(buf), iskb);
-	mesg_lock(&state, buf, size);
-	safe_write(fd, buf, MESG_BUF_SIZE(size));
-	crypto_wipe(buf, MESG_BUF_SIZE(size));
-	fprintf(stderr, "sent %lu-byte (%lu-byte) keyreq message\n",
-		size, MESG_BUF_SIZE(size));
-
-	nread = safe_read(fd, buf, 65536);
-	if (nread < MESG_BUF_SIZE(0)) {
-		fprintf(stderr, "Received a message that is too small.\n");
-		crypto_wipe(buf, nread);
-		return -1;
-	}
-	displaykey("buf", buf, nread);
-	if (mesg_unlock(&state, buf, nread)) {
-		fprintf(stderr, "Message cannot be decrypted.\n");
-		crypto_wipe(buf, nread);
-		return -1;
-	}
-	displaykey("buf (decrypted)", buf, nread);
-	displaykey("text", MESG_TEXT(buf), MESG_TEXT_SIZE(nread));
-
-	{
-		struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)MESG_TEXT(buf);
-		if (MESG_TEXT_SIZE(nread) != sizeof *msg) {
-			fprintf(stderr, "Key bundle request reply message (%lu) is too small (%lu).\n",
-				MESG_TEXT_SIZE(nread), sizeof *msg);
-			crypto_wipe(buf, nread);
-			return -1;
-		}
-		if (msg->msgtype != IDENT_KEYREQ_REP) {
-			fprintf(stderr, "Key bundle request reply message has invalid msgtype (%d).\n",
-				msg->msgtype);
-			crypto_wipe(buf, nread);
-			return -1;
-		}
-
-		/* displaykey_short("ik", msg->ik, 32); */
-
-		/* memcpy(ikb,      msg->ik,      32); */
-		crypto_from_eddsa_public(ikb, iskb);
-		/* memcpy(ikb_sig,  msg->ik_sig,  64); */
-		memcpy(spkb,     msg->spk,     32);
-		memcpy(spkb_sig, msg->spk_sig, 64);
-		memcpy(opkb,     msg->opk,     32);
-
-		displaykey_short("ikb",  ikb,  32);
-		displaykey_short("spkb", spkb, 32);
-		displaykey_short("opkb", opkb, 32);
-		/* displaykey("ikb_sig",  ikb_sig,  64); */
-		displaykey("spkb_sig", spkb_sig, 64);
-	}
-
-	crypto_wipe(buf, 65536);
-	displaykey_short("ika", ika, 32);
-	if (mesg_hshake_aprepare(&p2pstate, ika, ika_prv,
-		iskb, ikb, /*ikb_sig,*/ spkb, spkb_sig, opkb)) {
-		fprintf(stderr, "Error preparing handshake.\n");
-		return -1;
-	}
-
-	{
-		struct ident_forward_msg *msg = (void *)MESG_TEXT(buf);
-		msg->msgtype = IDENT_FORWARD_MSG;
-		memcpy(msg->isk, iskb, 32);
-		msg->message_count = 1;
-		store16_le(msg->messages, MESG_P2PHELLO_SIZE(24));
-		mesg_hshake_ahello(&p2pstate, msg->messages + 2, 24);
-		mesg_lock(&state, buf, IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(24)));
-		displaykey("buf", buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(24))));
-		safe_write(fd, buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(24))));
-	}
-
-	{
-		struct ident_forward_msg *msg = (void *)MESG_TEXT(buf);
-		msg->msgtype = IDENT_FORWARD_MSG;
-		memcpy(msg->isk, iskb, 32);
-		msg->message_count = 1;
-		store16_le(msg->messages, MESG_P2PHELLO_SIZE(24));
-		mesg_hshake_ahello(&p2pstate, msg->messages + 2, 24);
-		mesg_lock(&state, buf, IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(24)));
-		displaykey("buf", buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(24))));
-		safe_write(fd, buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(24))));
-	}
-
-	/* memset(MESG_OHELLO_TEXT(MESG_TEXT(buf)), 0x77, 24); */
-	/* mesg_hshake_ahello(&p2pstate, MESG_TEXT(buf), 24); */
-	/* mesg_lock(&state, buf, MESG_P2PHELLO_SIZE(24)); */
-	/* safe_write(fd, buf, MESG_BUF_SIZE(MESG_P2PHELLO_SIZE(24))); */
-
-	/* memset(MESG_TEXT(buf) + MESG_P2PHELLO_SIZE(0), 0x77, 24); */
-	/* mesg_hshake_ahello(&p2pstate, MESG_TEXT(buf), 24); */
-	/* safe_write(fd, buf, MESG_BUF_SIZE(MESG_P2PHELLO_SIZE(24))); */
-
-	/* memset(MESG_TEXT(buf), 0x77, 24); */
-	/* mesg_lock(&state, buf, 24); */
-
-	/* safe_write(fd, buf, MESG_BUF_SIZE(24)); */
-	/* crypto_wipe(buf, MESG_BUF_SIZE(24)); */
-	/* fprintf(stderr, "sent 24-byte message\n"); */
-
-	nread = safe_read(fd, buf, 65536);
-	while ((size_t)nread >= MESG_BUF_SIZE(1)) {
-		if (mesg_unlock(&state, buf, nread)) {
-			break;
-		}
-
-		/* if ((size_t)nread > MESG_BUF_SIZE(1)) { */
-		/* 	mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - 1); */
-		/* 	safe_write(fd, buf, nread - 1); */
-		/* 	fprintf(stderr, "sent %lu-byte (%lu-byte) message\n", MESG_TEXT_SIZE(nread) - 1, nread - 1); */
-		/* } */
-
-		crypto_wipe(buf, 65536);
-
-		nread = safe_read(fd, buf, 65536);
-	}
-
-	exit(EXIT_SUCCESS);
-fail:
-	crypto_wipe(buf, 65536);
-	exit(EXIT_FAILURE);
-}
 
 static
 int
@@ -397,6 +136,11 @@ fail:
 	return -1;
 }
 
+struct p2pstate {
+	struct key key;
+	struct mesg_state state;
+};
+
 static
 int
 bob(int argc, char **argv)
@@ -411,8 +155,8 @@ bob(int argc, char **argv)
 	int do_fetch;
 	uint8_t buf[65536];
 	size_t nread, size;
-	int opkcount;
-	uint8_t namelen;
+	/* int opkcount; */
+	/* uint8_t namelen; */
 
 	if (argc < 2 || argc > 5)
 		usage();
@@ -429,6 +173,8 @@ bob(int argc, char **argv)
 	crypto_from_eddsa_private(ident.ik_prv, ident.isk_prv);
 
 	fd = setclientup(host, port);
+	if (fd == -1)
+		exit(EXIT_FAILURE);
 
 	mesg_hshake_cprepare(&state, isks, iks, ident.isk, ident.isk_prv, ident.ik, ident.ik_prv);
 	mesg_hshake_chello(&state, buf);
@@ -483,16 +229,19 @@ bob(int argc, char **argv)
 	/* if (handle_replies(fd, buf, &state, 1)) */
 	/* 	goto fail; */
 
+
+	memset(&p2pstate, 0, sizeof p2pstate);
+
 	while (1) {
 		struct ident_fetch_reply_msg *msg = (struct ident_fetch_reply_msg *)MESG_TEXT(buf);
 		uint16_t msgsize;
+
+		/* sleep(1); */
 
 		*MESG_TEXT(buf) = IDENT_FETCH_MSG;
 		mesg_lock(&state, buf, 1LU);
 		safe_write(fd, buf, MESG_BUF_SIZE(1LU));
 		crypto_wipe(buf, MESG_BUF_SIZE(1LU));
-		fprintf(stderr, "sent %lu-byte (%lu-byte) message\n",
-			1LU, MESG_BUF_SIZE(1LU));
 
 		nread = safe_read(fd, buf, 65536);
 		if (nread < MESG_BUF_SIZE(0)) {
@@ -519,8 +268,9 @@ bob(int argc, char **argv)
 			goto fail;
 		}
 		if (msg->message_count == 0) {
-			fprintf(stderr, "No messages fetched.\n");
-			goto fail;
+			/* fprintf(stderr, "No messages fetched.\n"); */
+			sleep(1);
+			continue;
 		}
 		if (MESG_TEXT_SIZE(nread) < sizeof *msg + 34) {
 			fprintf(stderr, "Message fetch reply message (%lu) is too small (%lu).\n",
@@ -533,22 +283,19 @@ bob(int argc, char **argv)
 				MESG_TEXT_SIZE(nread), sizeof *msg + 34 + msgsize);
 			goto fail;
 		}
+
 		displaykey("sender", msg->messages + 2, 32);
-		displaykey("message", msg->messages + 34, msgsize);
 
 		{
 			struct hshake_ohello_msg *hmsg = (struct hshake_ohello_msg *)(msg->messages + 34);
 			uint8_t ika[32], hk[32];
+			uint8_t opk[32] = {0}, opk_prv[32] = {0};
+			uint16_t innermsgsize;
+			struct key key;
+			struct keypair *popk, *spk;
 
 			crypto_from_eddsa_public(ika, msg->messages + 2);
 			crypto_key_exchange(hk, ident.ik_prv, ika);
-
-			displaykey_short("ika", ika, 32);
-			displaykey_short("hk", hk, 32);
-
-			displaykey_short("mac", hmsg->mac, 16);
-			displaykey_short("nonce", hmsg->nonce, 24);
-			displaykey("message (encrypted)", &hmsg->msgtype, msgsize - 40);
 
 			if (crypto_unlock(
 					&hmsg->msgtype,
@@ -561,8 +308,44 @@ bob(int argc, char **argv)
 				goto fail;
 			}
 
-			displaykey("message (decrypted)", &hmsg->msgtype, msgsize - 40);
-			displaykey("eka", hmsg->eka, 32);
+			innermsgsize = load16_le(hmsg->message_size);
+
+			memcpy(key.data, hmsg->spkb, 32);
+			spk = stbds_hmgetp_null(ident.spks, key);
+			if (spk == NULL) {
+				fprintf(stderr, "Message was sent with an unrecognised signed prekey.\n");
+				goto fail;
+			}
+
+			if (crypto_verify32(hmsg->opkb, zero_key)) {
+				memcpy(key.data, hmsg->opkb, 32);
+				popk = stbds_hmgetp_null(ident.opks, key);
+				if (popk == NULL) {
+					fprintf(stderr, "Message was sent with an unrecognised one-time prekey.\n");
+					goto fail;
+				}
+				memcpy(opk,     popk->key.data, 32);
+				memcpy(opk_prv, popk->prv,      32);
+			}
+
+			mesg_hshake_bprepare(&p2pstate,
+				ika, hmsg->eka,
+				ident.ik, ident.ik_prv,
+				spk->key.data, spk->prv,
+				opk, opk_prv);
+
+			crypto_wipe(opk,     32);
+			crypto_wipe(opk_prv, 32);
+
+			if (mesg_hshake_bfinish(&p2pstate, hmsg->message, innermsgsize)) {
+				fprintf(stderr, "Failed to decrypt.\n");
+				goto fail;
+			}
+
+			{ int delresult = stbds_hmdel(ident.opks, key); displaykey_short("key", key.data, 32); fprintf(stderr, "%d\n", delresult); assert(delresult); }
+			crypto_wipe(&key, sizeof key);
+
+			fprintf(stderr, "%.*s\n", innermsgsize, MESG_TEXT(hmsg->message));
 		}
 
 		crypto_wipe(buf, nread);
@@ -625,6 +408,8 @@ client(int argc, char **argv)
 	crypto_from_eddsa_private(ikc_prv, iskc_prv);
 
 	fd = setclientup(host, port);
+	if (fd == -1)
+		exit(EXIT_FAILURE);
 
 	{
 		uint8_t buf[65536];
@@ -683,125 +468,7 @@ client(int argc, char **argv)
  * error, they abort the program.  They are not safe in the sense that they
  * cannot produce errors or in the sense that they can be used with impunity.
  */
-static
-size_t
-safe_read(int fd, uint8_t *buf, size_t max_size_p1)
-{
-	ssize_t nread;
 
-	do nread = read(fd, buf, max_size_p1);
-	while (nread == -1 && errno == EINTR);
-
-	if (nread == -1) {
-		fprintf(stderr, "Error while reading from socket (%d).\n", errno);
-		exit(EXIT_FAILURE);
-	}
-	if ((size_t)nread == max_size_p1) {
-		fprintf(stderr, "Peer sent a packet that is too large.\n");
-		exit(EXIT_FAILURE);
-	}
-
-	return nread;
-}
-
-static
-size_t
-safe_read_nonblock(int fd, uint8_t *buf, size_t max_size_p1)
-{
-	ssize_t nread;
-
-	do nread = recv(fd, buf, max_size_p1, MSG_DONTWAIT);
-	while (nread == -1 && errno == EINTR);
-
-	if (nread == -1 && errno == EAGAIN) {
-		return 0;
-	}
-	if (nread == -1) {
-		fprintf(stderr, "Error while reading from socket (%d).\n", errno);
-		exit(EXIT_FAILURE);
-	}
-	if ((size_t)nread == max_size_p1) {
-		fprintf(stderr, "Peer sent a packet that is too large.\n");
-		exit(EXIT_FAILURE);
-	}
-
-	return nread;
-}
-
-static
-size_t
-safe_recvfrom(int fd, uint8_t *buf, size_t max_size_p1,
-		struct sockaddr_storage *peeraddr, socklen_t *peeraddr_len)
-{
-	ssize_t nread;
-
-	do {
-		*peeraddr_len = sizeof(peeraddr);
-		nread = recvfrom(fd, buf, max_size_p1, 0,
-			sstosa(peeraddr), peeraddr_len);
-	} while (nread == -1 && errno == EINTR);
-
-	if (nread == -1) {
-		fprintf(stderr, "Error while reading from socket.\n");
-		exit(EXIT_FAILURE);
-	}
-	if ((size_t)nread == max_size_p1) {
-		fprintf(stderr, "Peer sent a packet that is too large.\n");
-		exit(EXIT_FAILURE);
-	}
-
-	return nread;
-}
-
-static
-void
-safe_write(int fd, const uint8_t *buf, size_t size)
-{
-	ssize_t result;
-
-	result = write(fd, buf, size);
-	while (result == -1 || (size_t)result < size) {
-		if (result == -1 && errno == EINTR) {
-			result = write(fd, buf, size);
-			continue;
-		}
-		if (result == -1) {
-			fprintf(stderr, "Error while writing to socket.\n");
-			exit(EXIT_FAILURE);
-		}
-		buf += result;
-		size -= result;
-		result = write(fd, buf, size);
-	}
-}
-
-static
-void
-safe_sendto(int fd, const uint8_t *buf, size_t size, struct sockaddr *peeraddr, socklen_t peeraddr_len)
-{
-	ssize_t result;
-
-	result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
-	while (result == -1 || (size_t)result < size) {
-		if (result == -1 && errno == EINTR) {
-			result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
-			continue;
-		}
-		if (result == -1) {
-			fprintf(stderr, "Error while writing to socket.\n");
-			exit(EXIT_FAILURE);
-		}
-		buf += result;
-		size -= result;
-		result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
-	}
-}
-
-static uint8_t zero_key[32] = {0};
-
-struct key {
-	uint8_t data[32];
-};
 struct stored_message {
 	uint8_t isk[32];
 	uint16_t size;
@@ -1299,7 +966,9 @@ serve(int argc, char **argv)
 						fprintf(stderr, "No messages to fetch.\n");
 						goto fetch_fail;
 					}
-					smsg = stbds_arrpop(kv->value.letterbox);
+					/* smsg = stbds_arrpop(kv->value.letterbox); */
+					smsg = kv->value.letterbox[0];
+					stbds_arrdel(kv->value.letterbox, 0);
 					msgcount = 1;
 
 				fetch_fail:
@@ -1463,7 +1132,6 @@ keygen(int argc, char **argv)
 	displaykey_short("prv", prv, 32);
 }
 
-static
 void
 usage(void)
 {

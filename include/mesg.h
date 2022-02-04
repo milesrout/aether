@@ -14,6 +14,16 @@ struct mesg {
 #define MESG_TEXT_SIZE(size) ((size) - sizeof(struct mesg))
 #define MESG_TEXT(buf) ((buf) + offsetof(struct mesg, text))
 #define MESG_HDR(buf) ((struct mesghdr *)(buf))
+struct mesg_hshake_bstate {
+	uint8_t ika[32];
+	uint8_t eka[32];
+	uint8_t ikb[32];
+	uint8_t ikb_prv[32];
+	uint8_t spkb[32];
+	uint8_t spkb_prv[32];
+	uint8_t opkb[32];
+	uint8_t opkb_prv[32];
+};
 struct mesg_hshake_cstate {
 	uint8_t iskd[32];        /* daemon public identity (signing) key */
 	uint8_t ikd[32];         /* daemon public identity (key-xchg) key */
@@ -79,6 +89,7 @@ struct mesg_ratchet_astate_prerecv {
 };
 struct mesg_state {
 	union {
+		struct mesg_hshake_bstate hsb;
 		struct mesg_hshake_cstate hsc;
 		struct mesg_hshake_dstate hsd;
 		struct mesg_ratchet_state ra;
@@ -107,9 +118,10 @@ struct hshake_ohello_msg {
 	uint8_t mac[16];
 	uint8_t nonce[24];
 	uint8_t msgtype;
-	/* uint8_t ika[32]; */
 	uint8_t eka[32];
-	/* uint8_t prekeys[8]; */
+	uint8_t spkb[32];
+	uint8_t opkb[32];
+	uint8_t message_size[2];
 	uint8_t message[];
 };
 struct hshake_omsg_msg {
@@ -129,11 +141,16 @@ extern int mesg_example4(int fd);
 #define MESG_HSHAKE_P2PSIZE MESG_P2PHELLO_SIZE
 extern int mesg_hshake_aprepare(struct mesg_state *state,
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[64],
-	const uint8_t his_sign_public_key[32],
-	const uint8_t his_public_key[32], /*const uint8_t his_public_key_sig[64],*/
+	const uint8_t his_sign_public_key[32], const uint8_t his_public_key[32],
 	const uint8_t his_signed_prekey[32], const uint8_t his_signed_prekey_sig[64],
 	const uint8_t his_onetime_prekey[32]);
 extern void mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize);
+extern void mesg_hshake_bprepare(struct mesg_state *state,
+	const uint8_t her_kex_public_key[32], const uint8_t her_ephemeral_key[32],
+	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
+	const uint8_t signed_prekey[32], const uint8_t signed_prekey_private[32],
+	const uint8_t onetime_prekey[32], const uint8_t onetime_prekey_private[32]);
+extern int mesg_hshake_bfinish(struct mesg_state *state, uint8_t *buf, size_t size);
 extern void mesg_hshake_cprepare(struct mesg_state *state,
 	const uint8_t his_sign_public_key[32], const uint8_t his_kex_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],

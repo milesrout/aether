@@ -1,15 +1,37 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#define STBDS_NO_SHORT_NAMES
+#include "stb_ds.h"
+#include "monocypher.h"
+
 #include "util.h"
 #include "mesg.h"
-#include "monocypher.h"
 
 #include "ident.h"
 
 static const uint8_t zero_key[32];
+
+static
+int
+fill_opks(struct ident_state *state, ptrdiff_t max)
+{
+	ptrdiff_t i, num;
+	struct keypair kp = {0};
+
+	num = stbds_hmlen(state->opks);
+	for (i = 0; i < max - num; i++) {
+		generate_kex_keypair(kp.key.data, kp.prv);
+		/* fprintf(stderr, "state->opks = %p\n", (void *)state->opks); */
+		stbds_hmputs(state->opks, kp);
+		/* displaykey_short("opk", kp.key.data, 32); */
+	}
+
+	return max - num;
+}
 
 size_t
 ident_opkssub_msg_init(struct ident_state *state, uint8_t *buf)
@@ -19,14 +41,12 @@ ident_opkssub_msg_init(struct ident_state *state, uint8_t *buf)
 	int count = 0;
 	int i;
 
+	count = fill_opks(state, 32);
+
 	msg->msgtype = IDENT_OPKSSUB_MSG;
-	for (i = 0; i < 32; i++) {
-		if (!crypto_verify32(state->opk_prvs[i], zero_key)) {
-			generate_kex_keypair(next_key, state->opk_prvs[i]);
-			displaykey("opk", next_key, 32);
-			next_key += 32;
-			count += 1;
-		}
+	for (i = 0; i < count; i++) {
+		memcpy(next_key, state->opks[32 - count + i].key.data, 32);
+		next_key += 32;
 	}
 	store16_le(msg->opk_count, count);
 
@@ -92,11 +112,16 @@ size_t
 ident_spksub_msg_init(struct ident_state *state, uint8_t *buf)
 {
 	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)buf;
+	struct keypair kp;
+
+	generate_kex_keypair(kp.key.data, kp.prv);
+	sign_key(kp.sig, state->isk_prv, state->isk, "AIBS", kp.key.data);
+
+	stbds_hmputs(state->spks, kp);
 
 	msg->msgtype = IDENT_SPKSUB_MSG;
-	memmove(state->oldspk_prv, state->spk_prv, 32);
-	generate_kex_keypair(msg->spk, state->spk_prv);
-	sign_key(msg->spk_sig, state->isk_prv, state->isk, "AIBS", msg->spk);
+	memcpy(msg->spk,     kp.key.data, 32);
+	memcpy(msg->spk_sig, kp.sig,      64);
 
 	return IDENT_SPKSUB_MSG_SIZE;
 }

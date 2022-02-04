@@ -91,8 +91,8 @@ store16_le(uint8_t out[2], uint16_t in)
 uint16_t
 load16_le(const uint8_t s[2])
 {
-    return (uint32_t)s[0]
-        | ((uint32_t)s[1] <<  8);
+    return (uint16_t)s[0]
+        | ((uint16_t)s[1] <<  8);
 }
 
 void
