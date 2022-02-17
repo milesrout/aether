@@ -228,7 +228,6 @@ bob(int argc, char **argv)
 	/* if (handle_replies(fd, buf, &state, 1)) */
 	/* 	goto fail; */
 
-
 	memset(&p2pstate, 0, sizeof p2pstate);
 
 	while (1) {

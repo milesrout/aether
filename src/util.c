@@ -1,8 +1,11 @@
 #include <limits.h>
+#ifndef __APPLE__
 #include <sys/random.h>
+#endif
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "util.h"
 #include "monocypher.h"
@@ -48,6 +51,13 @@ displaykey_short(const char *name, const uint8_t *key, size_t size)
 	fprintf(stderr, "\n");
 }
 
+#ifdef __APPLE__
+void
+randbytes(uint8_t *data, size_t size)
+{
+	arc4random_buf(data, size);
+}
+#else
 void
 randbytes(uint8_t *data, size_t size)
 {
@@ -56,6 +66,7 @@ randbytes(uint8_t *data, size_t size)
 	do result = getrandom(data, size, 0);
 	while (ssize != result);
 }
+#endif
 
 void
 simple_key_exchange(uint8_t shared_key[32],
