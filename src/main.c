@@ -44,7 +44,6 @@
 #include "isks.h"
 
 static const char *progname;
-static const uint8_t ohs_info[]  = "AetherwindOfflineHandshake";
 static uint8_t zero_key[32] = {0};
 
 /* A note on terminology.
@@ -287,6 +286,31 @@ bob(int argc, char **argv)
 		displaykey("sender", msg->messages + 2, 32);
 
 		{
+			uint8_t *message = msg->messages + 34;
+			/* try to decrypt as a normal message */
+			if (!mesg_unlock(&p2pstate, message, msgsize)) {
+				fprintf(stderr, "%.*s\n", (int)MESG_TEXT_SIZE(msgsize), MESG_TEXT(message));
+				continue;
+			}
+			/* fprintf(stderr, "Failed to decrypt as message of length %lu\n", msgsize); */
+
+		}
+
+		{
+			uint8_t *message = msg->messages + 34 + MESG_P2PHELLO_SIZE(0);
+			size_t message_size = msgsize - MESG_P2PHELLO_SIZE(0);
+			/* try to decrypt as a duplicate-initial message
+			 * (normal messaged prefixed with OHELLO) */
+			if (!mesg_unlock(&p2pstate, message, message_size)) {
+				fprintf(stderr, "%.*s\n", (int)MESG_TEXT_SIZE(message_size), MESG_TEXT(message));
+				continue;
+			}
+			/* fprintf(stderr, "Failed to decrypt as a duplicate-initial message of length %lu\n", message_size); */
+		}
+
+		/* try to decrypt as an initial message
+		 * (normal messaged prefixed with OHELLO) */
+		{
 			struct hshake_ohello_msg *hmsg = (struct hshake_ohello_msg *)(msg->messages + 34);
 			uint8_t ika[32], hk[32];
 			uint8_t opk[32] = {0}, opk_prv[32] = {0};
@@ -342,7 +366,12 @@ bob(int argc, char **argv)
 				goto fail;
 			}
 
-			{ int delresult = stbds_hmdel(ident.opks, key); displaykey_short("key", key.data, 32); fprintf(stderr, "%d\n", delresult); assert(delresult); }
+			{
+				int delresult = stbds_hmdel(ident.opks, key);
+				displaykey_short("key", key.data, 32);
+				fprintf(stderr, "%d\n", delresult);
+				assert(delresult);
+			}
 			crypto_wipe(&key, sizeof key);
 
 			fprintf(stderr, "%.*s\n", innermsgsize, MESG_TEXT(hmsg->message));
@@ -934,11 +963,11 @@ serve(int argc, char **argv)
 					break;
 				}
 				case IDENT_FETCH_MSG: {
-					struct ident_fetch_msg *msg = (struct ident_fetch_msg *)text;
+					/* struct ident_fetch_msg *msg = (struct ident_fetch_msg *)text; */
 					int msgcount = 0;
 					ptrdiff_t arrlen;
-					uint16_t message_size;
-					uint16_t slack;
+					/* uint16_t message_size; */
+					/* uint16_t slack; */
 					struct key isk;
 					struct userkv *kv;
 					struct stored_message smsg;

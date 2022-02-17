@@ -30,9 +30,6 @@
 #define MAX_SKIP 1000
 #define AD_SIZE  64
 
-/* TODO: discover through DNS or HTTPS or something */
-#include "isks.h"
-
 /* prepares the message by advancing the state machine, preparing the header,
  * encryping the message in place and then encrypting the header in place.
  * the resulting struct mesg is ready to be sent over the wire.
@@ -874,17 +871,6 @@ end:	crypto_wipe(ikc,    32);
 
 static
 void
-hash_prekeys(uint8_t prekeys[8], const uint8_t spkb[32], const uint8_t opkb[32])
-{
-	crypto_blake2b_general(prekeys, 4, NULL, 0, spkb, 32);
-	if (crypto_verify32(opkb, zero_key))
-		crypto_blake2b_general(prekeys + 4, 4, NULL, 0, opkb, 32);
-	else
-		memset(prekeys + 4, '\0', 4);
-}
-
-static
-void
 offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 		uint8_t *dh, size_t dh_size)
 {
@@ -906,7 +892,7 @@ offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 
 int
 mesg_hshake_aprepare(struct mesg_state *state,
-	const uint8_t ika[32], const uint8_t ika_prv[64],
+	const uint8_t ika[32], const uint8_t ika_prv[32],
 	const uint8_t iskb[32],
 	const uint8_t ikb[32], /*const uint8_t ikb_sig[64],*/
 	const uint8_t spkb[32], const uint8_t spkb_sig[64],
@@ -982,17 +968,19 @@ mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize)
 		msg->nonce,
 		&msg->msgtype,
 		sizeof(struct hshake_ohello_msg) - offsetof(struct hshake_ohello_msg, msgtype));
+	fprintf(stderr, "Encrypting message of size %lu\n", msgsize);
 	mesg_lock(state, msg->message, msgsize);
 }
 
+#if 0
 int
 mesg_example1(int fd)
 {
-	uint8_t iska[32], iska_prv[32];
+	/* uint8_t iska[32], iska_prv[32]; */
 	uint8_t ika[32], ika_prv[64];
 	/* obtained from server */
 	uint8_t iskb[32];
-	uint8_t ikb[32], ikb_sig[64];
+	/* uint8_t ikb[32], ikb_sig[64]; */
 	uint8_t spkb[32], spkb_sig[64];
 	uint8_t opkb[32];
 	uint8_t buf[65536];
@@ -1008,16 +996,18 @@ mesg_example1(int fd)
 	mesg_hshake_ahello(&state, buf, 0);
 
 	/* Write the P2PHELLO message out to a socket */
-	write(fd, buf, MESG_P2PHELLO_SIZE(0));
+	(void)!write(fd, buf, MESG_P2PHELLO_SIZE(0));
 
 	/* Wipe the P2PHELLO message now it has been sent */
 	crypto_wipe(buf, MESG_P2PHELLO_SIZE(0));
+
+	return 0;
 }
 
 int
-mesg_example2(int fd)
+mesg_example2(int fd __attribute__((unused)))
 {
-
+	return -1;
 }
 
 int
@@ -1052,13 +1042,13 @@ mesg_example3(int fd)
 		mesg_hshake_chello(&state, buf);
 
 		/* Write the hello message out to a socket */
-		write(fd, buf, MESG_HELLO_SIZE);
+		(void)!write(fd, buf, MESG_HELLO_SIZE);
 
 		/* Wipe the hello message now it has been sent */
 		crypto_wipe(buf, MESG_HELLO_SIZE);
 
 		/* Read a reply back from the peer */
-		read(fd, buf, MESG_REPLY_SIZE);
+		(void)!read(fd, buf, MESG_REPLY_SIZE);
 
 		/* Check the handshake reply's integrity and update state */
 		if (mesg_hshake_cfinish(&state, buf)) {
@@ -1093,7 +1083,7 @@ mesg_example4(int fd)
 		uint8_t buf[MESG_HSHAKE_SIZE];
 
 		/* Read a hello message from a peer */
-		read(fd, buf, MESG_HELLO_SIZE);
+		(void)!read(fd, buf, MESG_HELLO_SIZE);
 
 		/* Check the handshake hello and update state */
 		if (mesg_hshake_dcheck(&state, buf)) {
@@ -1108,7 +1098,7 @@ mesg_example4(int fd)
 		mesg_hshake_dreply(&state, buf);
 
 		/* Write the reply message out to the socket */
-		write(fd, buf, MESG_REPLY_SIZE);
+		(void)!write(fd, buf, MESG_REPLY_SIZE);
 
 		/* Wipe the reply message now it has been sent */
 		crypto_wipe(buf, MESG_REPLY_SIZE);
@@ -1116,3 +1106,4 @@ mesg_example4(int fd)
 
 	return 0;
 }
+#endif

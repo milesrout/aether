@@ -1,16 +1,22 @@
 ifeq ($(BUILD),release)
-	CFLAGS += -O3 -s -D_FORTIFY_SOURCE=2 -DNDEBUG -fno-delete-null-pointer-checks -march=native
+	CFLAGS += -O3 -s -D_FORTIFY_SOURCE=2 -DNDEBUG -march=native
 else ifeq ($(BUILD),valgrind)
-	CFLAGS += -Og -g -DÆTHER_USE_VALGRIND #-Werror 
+	CFLAGS += -Og -g
 else ifeq ($(BUILD),sanitise)
-	CFLAGS += -Og -g -fsanitize=address -fsanitize=undefined #-Werror 
+	CFLAGS += -Og -g -fsanitize=address -fsanitize=undefined
 	LDFLAGS += -lasan -lubsan
 else ifeq ($(BUILD),gdb)
-	CFLAGS += -O0 -g #-Werror
+	CFLAGS += -O0 -g
 else
 	BUILD = debug
-	CFLAGS += -Og -g #-Werror
+	CFLAGS += -Og -g
 endif
+
+#ifneq ($(BUILD),release)
+#	CFLAGS += -Werror
+#endif
+
+CFLAGS    += -DBUILD_$(shell echo '$(BUILD)' | tr '[:lower:]' '[:upper:]')
 
 TARGET    := aether
 
@@ -43,8 +49,10 @@ WARNINGS  += -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes
 WARNINGS  += -Wmissing-declarations -Wnormalized=nfkc -Wredundant-decls
 WARNINGS  += -Wnested-externs -fanalyzer
 
-CFLAGS    += -D_GNU_SOURCE $(INCS) -MMD -MP -std=c99
-CFLAGS    += -fPIE -ftrapv -fstack-protector -fno-strict-aliasing $(WARNINGS)
+CFLAGS    += -D_GNU_SOURCE $(INCS) -MMD -MP -std=c99 -fPIE -fstack-protector
+CFLAGS    += -ftrapv -fno-strict-aliasing -fno-delete-null-pointer-checks
+CFLAGSNW  := $(CFLAGS)
+CFLAGS    += $(WARNINGS)
 
 LDFLAGS   += -pie -fPIE
 LDLIBS    += -lm
@@ -53,18 +61,32 @@ VALGRIND_FLAGS += -s --show-leak-kinds=all --leak-check=full
 
 .PHONY: $(TARGET)
 $(TARGET): build/$(BUILD)/$(TARGET)
-	ln -sf build/$(BUILD)/$(TARGET) $(TARGET)
+	@echo '  SYMLINK ' $(TARGET) "->" build/$(BUILD)/$(TARGET)
+	@ln -sf build/$(BUILD)/$(TARGET) $(TARGET)
 
 build/$(BUILD)/$(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
+	@echo '  LD      ' $@
+	@$(CC) $(OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
+
+build/$(BUILD)/src/monocypher.c.o: src/monocypher.c
+	@mkdir -p $(dir $@)
+	@echo '  CC      ' $<.o
+	@$(CC) -c $(CFLAGSNW) $< -o $@
+
+build/$(BUILD)/src/stb_ds.c.o: src/stb_ds.c
+	@mkdir -p $(dir $@)
+	@echo '  CC      ' $<.o
+	@$(CC) -c $(CFLAGSNW) $< -o $@
 
 build/$(BUILD)/%.c.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) -c $(CFLAGS) $< -o $@
+	@echo '  CC      ' $<.o
+	@$(CC) -c $(CFLAGS) $< -o $@
 
 build/$(BUILD)/%.S.o: %.S
 	@mkdir -p $(dir $@)
-	$(AS) $(ASFLAGS) $< -o $@
+	@echo '  AS      ' $<.o
+	@$(AS) $(ASFLAGS) $< -o $@
 
 tags: $(SRCS)
 	gcc -M $(INCS) $(SRCS) | sed -e 's/[\ ]/\n/g' | \
@@ -103,5 +125,7 @@ debug:
 	./build/debug/$(TARGET)
 
 ifneq ($(MAKECMDGOALS),clean)
+ifneq ($(MAKECMDGOALS),cleanall)
 -include $(DEPS)
+endif
 endif

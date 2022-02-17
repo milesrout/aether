@@ -21,7 +21,7 @@ alice(int argc, char **argv)
 	uint8_t iska[32], iska_prv[32];
 	uint8_t ika[32], ika_prv[32];
 	uint8_t iskb[32], ikb[32], spkb[32], opkb[32];
-	uint8_t ikb_sig[64], spkb_sig[64];
+	uint8_t spkb_sig[64];
 	struct mesg_state state;
 	struct mesg_state p2pstate;
 	struct ident_state ident;
@@ -159,6 +159,8 @@ alice(int argc, char **argv)
 
 	crypto_wipe(buf, 65536);
 	displaykey_short("ika", ika, 32);
+	displaykey_short("spkb", spkb, 32);
+	displaykey_short("opkb", opkb, 32);
 	if (mesg_hshake_aprepare(&p2pstate, ika, ika_prv,
 		iskb, ikb, /*ikb_sig,*/ spkb, spkb_sig, opkb)) {
 		fprintf(stderr, "Error preparing handshake.\n");
@@ -221,9 +223,11 @@ alice(int argc, char **argv)
 		uint8_t *cbuf = smsg + MESG_P2PHELLO_SIZE(0); /* start of internal message */
 		uint8_t *ctext = MESG_TEXT(cbuf);
 		uint16_t msglength;
+		int n;
 
 		memset(ctext, 0, 65536 - (ctext - buf));
-		fscanf(stdin, "%256[^\n]", ctext);
+		n = fscanf(stdin, "%256[^\n]", ctext);
+		(void)n;
 		getchar();
 		msglength = strlen((char*)ctext);
 		fprintf(stderr, "n = %d\n", msglength);

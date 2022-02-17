@@ -25,9 +25,9 @@ fill_opks(struct ident_state *state, ptrdiff_t max)
 	num = stbds_hmlen(state->opks);
 	for (i = 0; i < max - num; i++) {
 		generate_kex_keypair(kp.key.data, kp.prv);
-		/* fprintf(stderr, "state->opks = %p\n", (void *)state->opks); */
+		fprintf(stderr, "state->opks = %p\n", (void *)state->opks);
 		stbds_hmputs(state->opks, kp);
-		/* displaykey_short("opk", kp.key.data, 32); */
+		displaykey_short("opk", kp.key.data, 32);
 	}
 
 	return max - num;

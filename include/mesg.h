@@ -140,7 +140,7 @@ extern int mesg_example4(int fd);
 #define MESG_HSHAKE_SIZE MESG_HELLO_SIZE
 #define MESG_HSHAKE_P2PSIZE MESG_P2PHELLO_SIZE
 extern int mesg_hshake_aprepare(struct mesg_state *state,
-	const uint8_t kex_public_key[32], const uint8_t kex_private_key[64],
+	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
 	const uint8_t his_sign_public_key[32], const uint8_t his_public_key[32],
 	const uint8_t his_signed_prekey[32], const uint8_t his_signed_prekey_sig[64],
 	const uint8_t his_onetime_prekey[32]);
