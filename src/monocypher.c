@@ -699,7 +699,7 @@ static void wipe_block(block *b)
 // updates a Blake2 hash with a 32 bit word, little endian.
 static void blake_update_32(crypto_blake2b_ctx *ctx, u32 input)
 {
-    u8 buf[4];
+    u8 buf[8]; /* only needs to be 4, but stack protector requires 8 */
     store32_le(buf, input);
     crypto_blake2b_update(ctx, buf, 4);
     WIPE_BUFFER(buf);

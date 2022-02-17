@@ -394,11 +394,11 @@ step_receiver_ratchet(struct mesg_ratchet_state_common *ra, struct mesghdr *hdr)
 
 	memcpy(ra->dhkr, hdr->pk, 32);
 
-	crypto_key_exchange(dh, ra->dhks_prv, ra->dhkr);
+	crypto_x25519(dh, ra->dhks_prv, ra->dhkr);
 	dh_ratchet(ra->rk, ra->ckr, ra->nhkr, dh);
 
 	generate_kex_keypair(ra->dhks, ra->dhks_prv);
-	crypto_key_exchange(dh, ra->dhks_prv, ra->dhkr);
+	crypto_x25519(dh, ra->dhks_prv, ra->dhkr);
 	dh_ratchet(ra->rk, ra->cks, ra->nhks, dh);
 
 	crypto_wipe(dh, 32);
@@ -653,14 +653,14 @@ mesg_hshake_bprepare(struct mesg_state *state,
 
 	crypto_wipe(state, sizeof *state);
 
-	crypto_key_exchange(dh,      spkb_prv, ika);
-	crypto_key_exchange(dh + 32, ikb_prv,  eka);
-	crypto_key_exchange(dh + 64, spkb_prv, eka);
+	crypto_x25519(dh,      spkb_prv, ika);
+	crypto_x25519(dh + 32, ikb_prv,  eka);
+	crypto_x25519(dh + 64, spkb_prv, eka);
 
 	if (crypto_verify32(opkb, zero_key)) {
 		offline_shared_secrets(ra->rk, ra->nhks, ra->nhkr, dh, 96);
 	} else {
-		crypto_key_exchange(dh + 96, opkb_prv, eka);
+		crypto_x25519(dh + 96, opkb_prv, eka);
 		offline_shared_secrets(ra->rk, ra->nhks, ra->nhkr, dh, 96);
 	}
 
@@ -686,15 +686,15 @@ mesg_hshake_bfinish(struct mesg_state *state, uint8_t *buf, size_t size)
 /* 	int result; */
 
 /* 	crypto_from_eddsa_public(ika,      hsb->iska); */
-/* 	crypto_key_exchange(dh,      hsb->spkb_prv, ika); */
-/* 	crypto_key_exchange(dh + 32, hsb->ikb_prv,  hsb->eka); */
-/* 	crypto_key_exchange(dh + 64, hsb->spkb_prv, hsb->eka); */
+/* 	crypto_x25519(dh,      hsb->spkb_prv, ika); */
+/* 	crypto_x25519(dh + 32, hsb->ikb_prv,  hsb->eka); */
+/* 	crypto_x25519(dh + 64, hsb->spkb_prv, hsb->eka); */
 
 /* 	if (crypto_verify32(hsb->opkb, zero_key)) { */
 /* 		offline_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh, 96); */
 /* 		crypto_wipe(dh, 96); */
 /* 	} else { */
-/* 		crypto_key_exchange(dh + 96, opkb_prv, hsb->eka); */
+/* 		crypto_x25519(dh + 96, opkb_prv, hsb->eka); */
 /* 		offline_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh, 128); */
 /* 		crypto_wipe(dh, 128); */
 /* 	} */
@@ -777,10 +777,10 @@ mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 		replymsg->eks,
 		MESG_REPLY_SIZE - offsetof(struct hshake_reply_msg, eks));
 
-	crypto_key_exchange(dh,      hsd->ikd_prv, hsd->ikc);
-	crypto_key_exchange(dh + 32, hsd->ikd_prv, hsd->ekc);
-	crypto_key_exchange(dh + 64, hsd->ekd_prv, hsd->ikc);
-	crypto_key_exchange(dh + 96, hsd->ekd_prv, hsd->ekc);
+	crypto_x25519(dh,      hsd->ikd_prv, hsd->ikc);
+	crypto_x25519(dh + 32, hsd->ikd_prv, hsd->ekc);
+	crypto_x25519(dh + 64, hsd->ekd_prv, hsd->ikc);
+	crypto_x25519(dh + 96, hsd->ekd_prv, hsd->ekc);
 
 	memcpy(iskc,    hsd->iskc,    32);
 	memcpy(ikc,     hsd->ikc,     32);
@@ -844,10 +844,10 @@ mesg_hshake_cfinish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 	if (check_key(hsc->iskd, "AHDC", hsc->cvc,      replymsg->cvc_sig))
 		goto end;
 
-	crypto_key_exchange(dh_hs,      hsc->ikc_prv, hsc->ikd);
-	crypto_key_exchange(dh_hs + 32, hsc->ekc_prv, hsc->ikd);
-	crypto_key_exchange(dh_hs + 64, hsc->ikc_prv, replymsg->eks);
-	crypto_key_exchange(dh_hs + 96, hsc->ekc_prv, replymsg->eks);
+	crypto_x25519(dh_hs,      hsc->ikc_prv, hsc->ikd);
+	crypto_x25519(dh_hs + 32, hsc->ekc_prv, hsc->ikd);
+	crypto_x25519(dh_hs + 64, hsc->ikc_prv, replymsg->eks);
+	crypto_x25519(dh_hs + 96, hsc->ekc_prv, replymsg->eks);
 
 	memcpy(ikc, hsc->ikc, 32);
 	memcpy(ikd, hsc->ikd, 32);
@@ -861,7 +861,7 @@ mesg_hshake_cfinish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 	memcpy(ra->ad + 32, ikd,           32);
 	memcpy(ra->cv,      replymsg->cvs, 32);
 
-	crypto_key_exchange(dh_ra, ra->dhks_prv, replymsg->eks);
+	crypto_x25519(dh_ra, ra->dhks_prv, replymsg->eks);
 	dh_ratchet(ra->rk, ra->cks, ra->nhks, dh_ra);
 	result = 0;
 
@@ -939,13 +939,13 @@ mesg_hshake_aprepare(struct mesg_state *state,
 	displaykey("spkb", spkb, 32);
 	displaykey("ikb", ikb, 32);
 	displaykey("opkb", opkb, 32);
-	crypto_key_exchange(dh,      ika_prv, spkb);
-	crypto_key_exchange(dh + 32, eka_prv, ikb);
-	crypto_key_exchange(dh + 64, eka_prv, spkb);
+	crypto_x25519(dh,      ika_prv, spkb);
+	crypto_x25519(dh + 32, eka_prv, ikb);
+	crypto_x25519(dh + 64, eka_prv, spkb);
 	if (crypto_verify32(opkb, zero_key)) {
 		offline_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh, 96);
 	} else {
-		crypto_key_exchange(dh + 96, eka_prv, opkb);
+		crypto_x25519(dh + 96, eka_prv, opkb);
 		offline_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh, 128);
 	}
 	crypto_wipe(eka_prv, 32);
@@ -954,11 +954,11 @@ mesg_hshake_aprepare(struct mesg_state *state,
 	memcpy(ra->ad,      ika, 32);
 	memcpy(ra->ad + 32, ikb, 32);
 
-	crypto_key_exchange(dh, ra->dhks_prv, spkb);
+	crypto_x25519(dh, ra->dhks_prv, spkb);
 	dh_ratchet(ra->rk, ra->cks, ra->nhks, dh);
 	crypto_wipe(dh, 32);
 
-	crypto_key_exchange(hk, ika_prv, ikb);
+	simple_key_exchange(hk, ika_prv, ikb, ika, ikb);
 	memcpy(rap->hk, hk, 32);
 	crypto_wipe(hk, 32);
 
@@ -971,25 +971,10 @@ mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize)
 	struct hshake_ohello_msg *msg = (struct hshake_ohello_msg *)buf;
 	struct mesg_ratchet_astate_prerecv *rap = &state->u.rap;
 
-	/* create hello message */
-	/* msg->msgtype = 0; /1* initial message *1/ */
-	/* displaykey_short("ika", rap->ika, 32); */
-	/* displaykey_short("eka", rap->eka, 32); */
-	/* memcpy(msg->ika, rap->ika, 32); */
-	/* memcpy(msg->eka, rap->eka, 32); */
-	/* hash_prekeys(msg->prekeys, rap->spkb, rap->opkb); */
-	/* displaykey_short("prek's", msg->prekeys, 8); */
-	/* mesg_lock(state, msg->message, MESG_P2PHELLO_SIZE(msgsize)); */
-
-	/* create hello message */
-	msg->msgtype = 0; /* initial message */
-	/* displaykey_short("eka", rap->eka, 32); */
-	/* displaykey_short("spkb", rap->spkb, 32); */
-	/* displaykey_short("opkb", rap->opkb, 32); */
+	msg->msgtype = 0;
 	memcpy(msg->eka, rap->eka, 32);
 	memcpy(msg->spkb, rap->spkb, 32);
 	memcpy(msg->opkb, rap->opkb, 32);
-	/* displaykey("buf2", buf - MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2)), MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(24))))); */
 	randbytes(msg->nonce, 24);
 	crypto_lock(msg->mac,
 		&msg->msgtype,
@@ -997,8 +982,6 @@ mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize)
 		msg->nonce,
 		&msg->msgtype,
 		sizeof(struct hshake_ohello_msg) - offsetof(struct hshake_ohello_msg, msgtype));
-	/* displaykey("buf3", buf - MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2)), MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(24))))); */
-	/* mesg_lock(state, msg->message, MESG_P2PHELLO_SIZE(msgsize)); */
 	mesg_lock(state, msg->message, msgsize);
 }
 

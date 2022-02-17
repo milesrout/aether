@@ -295,7 +295,7 @@ bob(int argc, char **argv)
 			struct keypair *popk, *spk;
 
 			crypto_from_eddsa_public(ika, msg->messages + 2);
-			crypto_key_exchange(hk, ident.ik_prv, ika);
+			simple_key_exchange(hk, ident.ik_prv, ika, ika, ident.ik);
 
 			if (crypto_unlock(
 					&hmsg->msgtype,
@@ -403,7 +403,6 @@ client(int argc, char **argv)
 	port = argc < 4? "3443" : argv[3];
 
 	generate_sig_keypair(iskc, iskc_prv);
-	/* generate_kex_keypair(ikc, ikc_prv); */
 	crypto_from_eddsa_public(ikc,      iskc);
 	crypto_from_eddsa_private(ikc_prv, iskc_prv);
 
@@ -526,7 +525,6 @@ print_table(struct userkv *table)
 		fprintf(stderr, "el = %p\n", (void *)(el = &table[i]));
 		displaykey_short("isk", el->key.data, 32);
 		displaykey_short("ik", el->value.ik, 32);
-		/* displaykey_short("ik_sig", el->value.ik_sig, 64); */
 		displaykey_short("spk", el->value.spk, 32);
 		displaykey_short("spksig", el->value.spk_sig, 64);
 

@@ -58,6 +58,22 @@ randbytes(uint8_t *data, size_t size)
 }
 
 void
+simple_key_exchange(uint8_t shared_key[32],
+	const uint8_t my_private_key[32], const uint8_t his_public_key[32],
+	const uint8_t first_public_key[32], const uint8_t second_public_key[32])
+{
+
+	crypto_blake2b_ctx ctx;
+
+	crypto_x25519(shared_key, my_private_key, his_public_key);
+	crypto_blake2b_general_init(&ctx, 32, NULL, 0);
+	crypto_blake2b_update(&ctx, shared_key, 32);
+	crypto_blake2b_update(&ctx, first_public_key, 32);
+	crypto_blake2b_update(&ctx, second_public_key, 32);
+	crypto_blake2b_final(&ctx, shared_key);
+}
+
+void
 generate_hidden_keypair(uint8_t hidden_key[32], uint8_t private_key[32])
 {
 	uint8_t seed[32];
@@ -70,7 +86,7 @@ void
 generate_kex_keypair(uint8_t public_key[32], uint8_t private_key[32])
 {
 	randbytes(private_key, 32);
-	crypto_key_exchange_public_key(public_key, private_key);
+	crypto_x25519_public_key(public_key, private_key);
 }
 
 void
