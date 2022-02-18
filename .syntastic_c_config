@@ -1,10 +1,15 @@
 -D_GNU_SOURCE
 -fanalyzer
+-fmax-errors=2
+-fno-delete-null-pointer-checks
+-fno-strict-aliasing
 -fPIE
 -fstack-protector
 -ftrapv
 -g
 -I./include
+-MMD
+-MP
 -Og
 -pedantic
 -pedantic-errors
@@ -12,7 +17,7 @@
 -Wall
 -Walloca
 -Walloc-zero
--Warray-bounds
+-Warray-bounds=2
 -Wattribute-alias=2
 -Wbad-function-cast
 -Wcast-align
@@ -43,6 +48,7 @@
 -Wpacked
 -Wparentheses
 -Wredundant-decls
+-Wreturn-local-addr
 -Wshift-overflow=2
 -Wstack-protector
 -Wstrict-overflow=5

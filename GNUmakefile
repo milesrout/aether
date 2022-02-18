@@ -102,7 +102,9 @@ cleanall: clean
 	$(RM) -r build/{debug,release,valgrind,sanitise,gdb}/*
 
 syntastic:
-	echo $(CFLAGS) | tr ' ' '\n' > .syntastic_c_config
+	echo $(CFLAGS) | tr ' ' '\n' | sort | \
+	grep -v "BUILD_$(shell echo '$(BUILD)' | tr '[:lower:]' '[:upper:]')" \
+	> .syntastic_c_config
 
 release:
 	-$(MAKE) "BUILD=release"
