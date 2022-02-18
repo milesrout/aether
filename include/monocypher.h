@@ -51,11 +51,10 @@
 // with this software.  If not, see
 // <https://creativecommons.org/publicdomain/zero/1.0/>
 
-#ifndef MONOCYPHER_H
+#ifdef MONOCYPHER_H
+#error "must not include monocypher.h twice"
+#endif
 #define MONOCYPHER_H
-
-#include <stddef.h>
-#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -378,5 +377,3 @@ void crypto_hidden_key_pair(uint8_t hidden[32], uint8_t secret_key[32],
 #ifdef __cplusplus
 }
 #endif
-
-#endif // MONOCYPHER_H

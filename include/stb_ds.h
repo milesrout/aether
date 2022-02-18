@@ -388,11 +388,16 @@ CREDITS
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
-#ifndef INCLUDE_STB_DS_H
+#ifdef INCLUDE_STB_DS_H
+#error "must not include stb_ds.h more than once"
+#endif
 #define INCLUDE_STB_DS_H
 
+#ifdef STB_DS_IMPLEMENTATION
 #include <stddef.h>
+#include <assert.h>
 #include <string.h>
+#endif
 
 #ifndef STBDS_NO_SHORT_NAMES
 #define arrlen      stbds_arrlen
@@ -456,7 +461,9 @@ CREDITS
 #error "You must define both STBDS_REALLOC and STBDS_FREE, or neither."
 #endif
 #if !defined(STBDS_REALLOC) && !defined(STBDS_FREE)
+#ifdef STB_DS_IMPLEMENTATION
 #include <stdlib.h>
+#endif
 #define STBDS_REALLOC(c,p,s) realloc(p,s)
 #define STBDS_FREE(c,p)      free(p)
 #endif
@@ -721,17 +728,12 @@ template<class T> static T * stbds_shmode_func_wrapper(T *, size_t elemsize, int
 #define stbds_shmode_func_wrapper(t,e,m)  stbds_shmode_func(e,m)
 #endif
 
-#endif // INCLUDE_STB_DS_H
-
-
 //////////////////////////////////////////////////////////////////////////////
 //
 //   IMPLEMENTATION
 //
 
 #ifdef STB_DS_IMPLEMENTATION
-#include <assert.h>
-#include <string.h>
 
 #ifndef STBDS_ASSERT
 #define STBDS_ASSERT_WAS_UNDEFINED

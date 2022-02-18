@@ -1,6 +1,8 @@
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 
 #include "monocypher.h"
@@ -185,7 +187,7 @@ alice(int argc, char **argv)
 		store16_le(msg->messages, MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)));
 		mesg_lock(&state, buf, IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength))));
 		safe_write(fd, buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)))));
-		fprintf(stderr, "sent %lu-byte (%lu-byte) lookup message\n",
+		fprintf(stderr, "sent %lu-byte (%lu-byte) message-forwarding message\n",
 			IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength))),
 			MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)))));
 		crypto_wipe(buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)))));
@@ -199,7 +201,7 @@ alice(int argc, char **argv)
 		uint8_t *ctext = MESG_TEXT(cbuf);
 		const uint16_t msglength = 38;
 
-		memset(ctext, 0xa5, msglength/2);
+		memset(ctext, 0x7a, msglength/2);
 		memset(ctext + msglength/2, 0x5a, msglength/2);
 
 		store16_le(cbuf - 2, msglength);
@@ -241,7 +243,7 @@ alice(int argc, char **argv)
 		store16_le(msg->messages, MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)));
 		mesg_lock(&state, buf, IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength))));
 		safe_write(fd, buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)))));
-		fprintf(stderr, "sent %lu-byte (%lu-byte) lookup message\n",
+		fprintf(stderr, "sent %lu-byte (%lu-byte) message-forwarding message\n",
 			IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength))),
 			MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)))));
 		crypto_wipe(buf, MESG_BUF_SIZE(IDENT_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)))));
