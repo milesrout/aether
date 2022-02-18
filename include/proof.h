@@ -13,6 +13,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+
 extern void proof_create(uint8_t challenge[32]);
 extern int proof_check(
 	const uint8_t response[96],
