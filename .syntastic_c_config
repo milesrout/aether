@@ -8,8 +8,6 @@
 -ftrapv
 -g
 -I./include
--MMD
--MP
 -Og
 -pedantic
 -pedantic-errors

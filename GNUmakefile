@@ -102,7 +102,7 @@ cleanall: clean
 	$(RM) -r build/{debug,release,valgrind,sanitise,gdb}/*
 
 syntastic:
-	echo $(CFLAGS) | tr ' ' '\n' | sort | \
+	echo $(CFLAGS) | tr ' ' '\n' | sort | grep -v "MMD\|MP" | \
 	grep -v "BUILD_$(shell echo '$(BUILD)' | tr '[:lower:]' '[:upper:]')" \
 	> .syntastic_c_config
 
