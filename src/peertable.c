@@ -122,6 +122,8 @@ peer_add(struct peertable *pt, const struct peer_init *pi)
 	 */
 	while (pt->table[idx] && pt->table[idx] != &tombstone)
 		idx = (idx + 1) % pt->cap;
+	if (pt->table[idx] == &tombstone)
+		pt->tombs--;
 	pt->table[idx] = peer;
 	pt->size++;
 

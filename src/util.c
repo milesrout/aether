@@ -24,9 +24,10 @@ padme(size_t l)
 	e = floorlog2(l);
 	s = floorlog2(e) + 1;
 	last_bits = e - s;
-	bit_mask = ((uint64_t)-1L) >> (sizeof(size_t) * CHAR_BIT - last_bits);
+	bit_mask = last_bits == 0 ? 0 : ((uint64_t)-1L) >> (sizeof(size_t) * CHAR_BIT - last_bits);
 	return (l + bit_mask) & ~bit_mask;
 }
+
 
 void
 dumpbytes(const uint8_t *data, size_t size)
@@ -67,6 +68,16 @@ randbytes(uint8_t *data, size_t size)
 	while (ssize != result);
 }
 #endif
+
+void
+randusername(char *username, const char *base)
+{
+	uint8_t rand[4]; /* -fstack-protector */
+
+	randbytes(rand, 2);
+	sprintf(username, "%s%d", base, load16_le(rand));
+	crypto_wipe(rand, 2);
+}
 
 void
 simple_key_exchange(uint8_t shared_key[32],
