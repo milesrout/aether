@@ -1,6 +1,5 @@
 -D_GNU_SOURCE
 -fanalyzer
--fmax-errors=2
 -fno-delete-null-pointer-checks
 -fno-strict-aliasing
 -fPIE
