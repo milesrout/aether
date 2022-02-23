@@ -466,6 +466,50 @@ fail:
 }
 
 static
+ssize_t
+handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
+{
+	struct mesghdr *hdr = MESG_HDR(buf);
+	uint8_t *text = MESG_TEXT(buf);
+	size_t size = MESG_TEXT_SIZE(nread);
+	struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
+	struct key isk;
+	struct userkv *kv;
+	struct userinfo blank = {0}, *value = &blank;
+	struct key opk = {0};
+	ssize_t result;
+
+	if (size < IDENT_KEYREQ_MSG_SIZE) {
+		fprintf(stderr, "Key bundle request message (%lu) is the wrong size (%lu).\n",
+			size, IDENT_KEYREQ_MSG_SIZE);
+		goto fail;
+	}
+
+	memcpy(isk.data, msg->isk, 32);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
+		fprintf(stderr, "Can only request a key bundle for a registered identity.\n");
+		goto fail;
+	}
+
+	value = &kv->value;
+
+	if (stbds_arrlen(value->opks) > 0) {
+		opk = stbds_arrpop(value->opks);
+	} else {
+		crypto_wipe(opk.data, 32);
+	}
+
+fail:
+	result = ident_keyreq_rep_init(MESG_TEXT(buf), hdr->msn, value->spk, value->spk_sig, opk.data);
+	mesg_lock(&peer->state, buf, result);
+
+	print_table(ctx->table);
+	/* print_nametable(ctx->namestable); */
+
+	return result;
+}
+
+static
 void
 serve(int argc, char **argv)
 {
@@ -633,6 +677,7 @@ serve(int argc, char **argv)
 
 			if (size >= sizeof(struct msg)) {
 				struct msg *msg = (struct msg *)text;
+				const char *name;
 				fprintf(stderr, "msg proto = %d\n", msg->proto);
 				fprintf(stderr, "msg type = %d\n", msg->type);
 				fprintf(stderr, "msg len = %d\n", load16_le(msg->len));
@@ -641,91 +686,37 @@ serve(int argc, char **argv)
 					switch (msg->type) {
 					case IDENT_REGISTER_MSG:
 						size = handle_register(&ctx, peer, buf, nread);
-						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
-							sstosa(&pi.addr), pi.addr_len);
-						crypto_wipe(buf, MESG_BUF_SIZE(size));
-						fprintf(stderr, "sent %lu-byte (%lu-byte) registration ack\n",
-							size, MESG_BUF_SIZE(size));
+						name = "registration ack";
 						break;
-					case IDENT_SPKSUB_MSG: 
+					case IDENT_SPKSUB_MSG:
 						size = handle_spksub(&ctx, peer, buf, nread);
-						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
-							sstosa(&pi.addr), pi.addr_len);
-						crypto_wipe(buf, MESG_BUF_SIZE(size));
-						fprintf(stderr, "sent %lu-byte (%lu-byte) spk submission ack\n",
-							size, MESG_BUF_SIZE(size));
+						name = "spk submission ack";
 						break;
-					case IDENT_OPKSSUB_MSG: 
+					case IDENT_OPKSSUB_MSG:
 						size = handle_opkssub(&ctx, peer, buf, nread);
-						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
-							sstosa(&pi.addr), pi.addr_len);
-						crypto_wipe(buf, MESG_BUF_SIZE(size));
-						fprintf(stderr, "sent %lu-byte (%lu-byte) opk submission ack\n",
-							size, MESG_BUF_SIZE(size));
+						name = "opk submission ack";
 						break;
-					case IDENT_LOOKUP_MSG: 
+					case IDENT_LOOKUP_MSG:
 						size = handle_lookup(&ctx, peer, buf, nread);
-						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
-								sstosa(&pi.addr), pi.addr_len);
-						crypto_wipe(buf, MESG_BUF_SIZE(size));
-						fprintf(stderr, "sent %lu-byte (%lu-byte) lookup reply message\n",
-								size, MESG_BUF_SIZE(size));
+						name = "lookup reply";
 						break;
-					case IDENT_REVERSE_LOOKUP_MSG: 
+					case IDENT_REVERSE_LOOKUP_MSG:
 						size = handle_reverse_lookup(&ctx, peer, buf, nread);
-						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
-							sstosa(&pi.addr), pi.addr_len);
-						crypto_wipe(buf, MESG_BUF_SIZE(size));
-						fprintf(stderr, "sent %lu-byte (%lu-byte) reverse-lookup reply message\n",
-							size, MESG_BUF_SIZE(size));
+						name = "reverse lookup reply";
 						break;
-					case IDENT_KEYREQ_MSG: {
-						struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
-						struct key isk;
-						struct userkv *kv;
-						struct userinfo blank = {0}, *value = &blank;
-						struct key opk = {0};
-
-						if (size < IDENT_KEYREQ_MSG_SIZE) {
-							fprintf(stderr, "Key bundle request message (%lu) is the wrong size (%lu).\n",
-								size, IDENT_KEYREQ_MSG_SIZE);
-							goto keyreq_fail;
-						}
-
-						memcpy(isk.data, msg->isk, 32);
-						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
-							fprintf(stderr, "Can only request a key bundle for a registered identity.\n");
-							goto keyreq_fail;
-						}
-
-						value = &kv->value;
-
-						if (stbds_arrlen(value->opks) > 0) {
-							opk = stbds_arrpop(value->opks);
-						} else {
-							crypto_wipe(opk.data, 32);
-						}
-
-					keyreq_fail:
-						{
-							size_t repsize = ident_keyreq_rep_init(MESG_TEXT(buf), hdr->msn,
-								value->spk, value->spk_sig, opk.data);
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
-								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) keyreq reply message\n",
-								repsize, MESG_BUF_SIZE(repsize));
-						}
-
-						print_table(ctx.table);
-						/* print_nametable(ctx.namestable); */
+					case IDENT_KEYREQ_MSG:
+						size = handle_keyreq(&ctx, peer, buf, nread);
+						name = "key request reply";
 						break;
-					}
 					default:
 						fprintf(stderr, "fail\n");
 						abort();
 					}
+					safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+						sstosa(&pi.addr), pi.addr_len);
+					crypto_wipe(buf, MESG_BUF_SIZE(size));
+					fprintf(stderr, "sent %lu-byte (%lu-byte) %s message\n",
+						size, MESG_BUF_SIZE(size), name);
 					break;
 				case PROTO_MSG:
 					switch (msg->type) {
@@ -766,7 +757,7 @@ serve(int argc, char **argv)
 					fetch_fail:
 						{
 							struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)MESG_TEXT(buf);
-							size_t repsize, totalmsglength; 
+							size_t repsize, totalmsglength;
 
 							totalmsglength = msgcount == 0? 0 : smsg.size + 34;
 							repsize = msg_fetch_rep_init(MESG_TEXT(buf), hdr->msn, msgcount, totalmsglength);
