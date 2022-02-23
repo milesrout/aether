@@ -509,6 +509,69 @@ fail:
 	return result;
 }
 
+
+static
+ssize_t
+handle_fetch(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
+{
+	struct mesghdr *hdr = MESG_HDR(buf);
+	uint8_t *text = MESG_TEXT(buf);
+	size_t size = MESG_TEXT_SIZE(nread);
+	/* struct msg_fetch_msg *msg = (struct msg_fetch_msg *)text; */
+	int msgcount = 0;
+	ptrdiff_t arrlen;
+	/* uint16_t slack; */
+	struct key isk;
+	struct userkv *kv;
+	struct stored_message smsg;
+	size_t totalmsglength;
+	ssize_t result;
+
+	if (size < MSG_FETCH_MSG_SIZE) {
+		fprintf(stderr, "Message-fetching message (%lu) is too small (%lu).\n",
+				size, MSG_FETCH_MSG_SIZE);
+		goto fail;
+	}
+
+	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
+		fprintf(stderr, "Only registered identities may fetch messages.\n");
+		goto fail;
+	}
+
+	/* TODO: set to maximum value that makes total packet size <= 64k */
+	/* slack = 32768; */
+
+	/* for now, fetch only 1 message at a time */
+	arrlen = stbds_arrlen(kv->value.letterbox);
+	if (arrlen == 0) {
+		fprintf(stderr, "No messages to fetch.\n");
+		goto fail;
+	}
+	smsg = kv->value.letterbox[0];
+	stbds_arrdel(kv->value.letterbox, 0);
+	msgcount = 1;
+
+fail:
+	totalmsglength = msgcount == 0 ? 0 : smsg.size + 34;
+	result = msg_fetch_rep_init(text, hdr->msn, msgcount, totalmsglength);
+
+	{
+		struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)text;
+
+		if (msgcount == 1) {
+			struct msg_fetch_content_msg *innermsg = (struct msg_fetch_content_msg *)msg->messages;
+			store16_le(innermsg->len, smsg.size);
+			memcpy(innermsg->isk,  smsg.isk,  32);
+			memcpy(innermsg->text, smsg.data, smsg.size);
+		}
+	}
+
+	mesg_lock(&peer->state, buf, result);
+
+	return result;
+}
+
 static
 void
 serve(int argc, char **argv)
@@ -720,67 +783,14 @@ serve(int argc, char **argv)
 					break;
 				case PROTO_MSG:
 					switch (msg->type) {
-					case MSG_FETCH_MSG: {
-						/* struct msg_fetch_msg *msg = (struct msg_fetch_msg *)text; */
-						int msgcount = 0;
-						ptrdiff_t arrlen;
-						/* uint16_t slack; */
-						struct key isk;
-						struct userkv *kv;
-						struct stored_message smsg;
-
-						if (size < MSG_FETCH_MSG_SIZE) {
-							fprintf(stderr, "Message-fetching message (%lu) is too small (%lu).\n",
-								size, MSG_FETCH_MSG_SIZE);
-							goto fetch_fail;
-						}
-
-						memcpy(isk.data, peer->state.u.rad.iskc, 32);
-						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
-							fprintf(stderr, "Only registered identities may fetch messages.\n");
-							goto fetch_fail;
-						}
-							
-						/* TODO: set to maximum value that makes total packet size <= 64k */
-						/* slack = 32768; */
-
-						/* for now, fetch only 1 message at a time */
-						arrlen = stbds_arrlen(kv->value.letterbox);
-						if (arrlen == 0) {
-							fprintf(stderr, "No messages to fetch.\n");
-							goto fetch_fail;
-						}
-						smsg = kv->value.letterbox[0];
-						stbds_arrdel(kv->value.letterbox, 0);
-						msgcount = 1;
-
-					fetch_fail:
-						{
-							struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)MESG_TEXT(buf);
-							size_t repsize, totalmsglength;
-
-							totalmsglength = msgcount == 0? 0 : smsg.size + 34;
-							repsize = msg_fetch_rep_init(MESG_TEXT(buf), hdr->msn, msgcount, totalmsglength);
-
-							if (msgcount == 1) {
-								struct msg_fetch_content_msg *innermsg = (struct msg_fetch_content_msg *)msg->messages;
-								store16_le(innermsg->len, smsg.size);
-								memcpy(innermsg->isk,  smsg.isk,  32);
-								memcpy(innermsg->text, smsg.data, smsg.size);
-							}
-
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
-								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) message-fetching ack\n",
-								repsize, MESG_BUF_SIZE(repsize));
-						}
-
-						/* print_table(ctx.table); */
-						/* print_nametable(ctx.namestable); */
+					case MSG_FETCH_MSG:
+						size = handle_fetch(&ctx, peer, buf, nread);
+						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+							sstosa(&pi.addr), pi.addr_len);
+						crypto_wipe(buf, MESG_BUF_SIZE(size));
+						fprintf(stderr, "sent %lu-byte (%lu-byte) fetch reply message\n",
+							size, MESG_BUF_SIZE(size));
 						break;
-					}
 					case MSG_FORWARD_MSG: {
 						struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
 						int result = 1;
