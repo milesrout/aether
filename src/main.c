@@ -236,7 +236,7 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 	struct userinfo ui = {0};
 	struct userkv *kv;
 	uint8_t failure = 1;
-	ssize_t result = -1;
+	ssize_t result;
 
 	if (size < IDENT_REGISTER_MSG_BASE_SIZE) {
 		fprintf(stderr, "Registration message (%lu) is too short (%lu).\n",
@@ -258,7 +258,7 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) != NULL) {
 		if (strcmp(kv->value.username, (const char *)msg->username) == 0) {
-			result = 0;
+			failure = 0;
 			goto fail;
 		}
 		fprintf(stderr, "Cannot register an already-registered identity key.\n");
@@ -285,6 +285,50 @@ fail:
 
 	print_table(ctx->table);
 	print_nametable(ctx->namestable);
+
+	return result;
+}
+
+static
+ssize_t
+handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
+{
+	struct mesghdr *hdr = MESG_HDR(buf);
+	uint8_t *text = MESG_TEXT(buf);
+	size_t size = MESG_TEXT_SIZE(nread);
+	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
+	struct key isk;
+	struct userkv *kv;
+	uint8_t failure = 1;
+	ssize_t result;
+
+	if (size < IDENT_SPKSUB_MSG_SIZE) {
+		fprintf(stderr, "Signed prekey submission message (%lu) is the wrong size (%lu).\n",
+			size, IDENT_SPKSUB_MSG_SIZE);
+		goto fail;
+	}
+
+	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
+		fprintf(stderr, "Can only submit a signed prekey for a registered identity.\n");
+		goto fail;
+	}
+
+	if (check_key(isk.data, "AIBS", msg->spk, msg->spk_sig)) {
+		fprintf(stderr, "Failed signature\n");
+		goto fail;
+	}
+
+	failure = 0;
+	memcpy(kv->value.spk, msg->spk, 32);
+	memcpy(kv->value.spk_sig, msg->spk_sig, 64);
+
+fail:
+	result = ident_spksub_ack_init(MESG_TEXT(buf), hdr->msn, failure);
+	mesg_lock(&peer->state, buf, result);
+
+	print_table(ctx->table);
+	/* print_nametable(ctx->namestable); */
 
 	return result;
 }
@@ -471,44 +515,14 @@ serve(int argc, char **argv)
 						fprintf(stderr, "sent %lu-byte (%lu-byte) registration ack\n",
 							size, MESG_BUF_SIZE(size));
 						break;
-					case IDENT_SPKSUB_MSG: {
-						struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
-						struct key isk;
-						struct userkv *kv;
-						uint8_t result = 1;
-						if (size < IDENT_SPKSUB_MSG_SIZE) {
-							fprintf(stderr, "Signed prekey submission message (%lu) is the wrong size (%lu).\n",
-								size, IDENT_SPKSUB_MSG_SIZE);
-							goto spksub_fail;
-						}
-
-						memcpy(isk.data, peer->state.u.rad.iskc, 32);
-						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
-							fprintf(stderr, "Can only submit a signed prekey for a registered identity.\n");
-							goto spksub_fail;
-						}
-
-						if (check_key(isk.data, "AIBS", msg->spk, msg->spk_sig)) {
-							fprintf(stderr, "Failed signature\n");
-							goto spksub_fail;
-						}
-						result = 0;
-						memcpy(kv->value.spk, msg->spk, 32);
-						memcpy(kv->value.spk_sig, msg->spk_sig, 64);
-					spksub_fail:
-						{
-							size_t repsize = ident_spksub_ack_init(MESG_TEXT(buf), hdr->msn, result);
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
-								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) spk submission ack\n",
-								repsize, MESG_BUF_SIZE(repsize));
-						}
-						print_table(ctx.table);
-						/* print_nametable(ctx.namestable); */
+					case IDENT_SPKSUB_MSG: 
+						size = handle_spksub(&ctx, peer, buf, nread);
+						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+							sstosa(&pi.addr), pi.addr_len);
+						crypto_wipe(buf, MESG_BUF_SIZE(size));
+						fprintf(stderr, "sent %lu-byte (%lu-byte) spk submission ack\n",
+							size, MESG_BUF_SIZE(size));
 						break;
-					}
 					case IDENT_OPKSSUB_MSG: {
 						struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
 						struct key isk;
