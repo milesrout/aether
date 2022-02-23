@@ -334,6 +334,138 @@ fail:
 }
 
 static
+ssize_t
+handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
+{
+	struct mesghdr *hdr = MESG_HDR(buf);
+	uint8_t *text = MESG_TEXT(buf);
+	size_t size = MESG_TEXT_SIZE(nread);
+	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
+	struct key isk;
+	struct userkv *kv;
+	int i;
+	uint16_t opkcount;
+	uint8_t failure = 1;
+	ssize_t result;
+
+	if (size < IDENT_OPKSSUB_MSG_BASE_SIZE) {
+		fprintf(stderr, "One-time prekey submission message (%lu) is too short (%lu).\n",
+				size, IDENT_OPKSSUB_MSG_BASE_SIZE);
+		goto fail;
+	}
+
+	opkcount = load16_le(msg->opk_count);
+	fprintf(stderr, "OPK count: %d\n", opkcount);
+	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount)) {
+		fprintf(stderr, "One-time prekey submission message (%lu) is the wrong size (%lu).\n",
+				size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
+		goto fail;
+	}
+
+	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
+		fprintf(stderr, "Can only submit one-time prekeys for a registered identity.\n");
+		goto fail;
+	}
+
+	failure = 0;
+
+	stbds_arrsetcap(kv->value.opks, opkcount);
+	for (i = 0; i < opkcount; i++) {
+		struct key opk;
+		memcpy(opk.data, msg->opk[i], 32);
+		stbds_arrput(kv->value.opks, opk);
+		displaykey_short("opk", kv->value.opks[stbds_arrlen(kv->value.opks) - 1].data, 32);
+	}
+
+fail:
+	result = ident_opkssub_ack_init(MESG_TEXT(buf), hdr->msn, failure);
+	mesg_lock(&peer->state, buf, result);
+
+	print_table(ctx->table);
+	/* print_nametable(ctx->namestable); */
+
+	return result;
+}
+
+static
+ssize_t
+handle_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
+{
+	struct mesghdr *hdr = MESG_HDR(buf);
+	uint8_t *text = MESG_TEXT(buf);
+	size_t size = MESG_TEXT_SIZE(nread);
+	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
+	struct key k = {0};
+	uint8_t namelen;
+	ssize_t result;
+
+	if (size < IDENT_LOOKUP_MSG_BASE_SIZE) {
+		fprintf(stderr, "Username lookup message (%lu) is too small (%lu).\n",
+				size, IDENT_LOOKUP_MSG_BASE_SIZE);
+		goto fail;
+	}
+	namelen = msg->username_len;
+	if (size < IDENT_LOOKUP_MSG_SIZE(namelen)) {
+		fprintf(stderr, "Username lookup message (%lu) is the wrong size (%lu).\n",
+				size, IDENT_LOOKUP_MSG_SIZE(namelen));
+		goto fail;
+	}
+	if (msg->username[namelen] != '\0') {
+		fprintf(stderr, "Username lookup message is invalid.\n");
+		goto fail;
+	}
+
+	k = stbds_shget(ctx->namestable, msg->username);
+
+fail:
+	result = ident_lookup_rep_init(MESG_TEXT(buf), hdr->msn, k.data);
+	mesg_lock(&peer->state, buf, result);
+
+	/* print_table(ctx->table); */
+	print_nametable(ctx->namestable);
+
+	return result;
+}
+static
+ssize_t
+handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
+{
+	struct mesghdr *hdr = MESG_HDR(buf);
+	uint8_t *text = MESG_TEXT(buf);
+	size_t size = MESG_TEXT_SIZE(nread);
+	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
+	struct key isk;
+	struct userkv *kv;
+	struct userinfo blank = {0}, *value = &blank;
+	ssize_t result;
+
+	if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE) {
+		fprintf(stderr, "Username reverse-lookup message (%lu) is too small (%lu).\n",
+				size, IDENT_REVERSE_LOOKUP_MSG_SIZE);
+		goto fail;
+	}
+
+	memcpy(isk.data, msg->isk, 32);
+	displaykey("isk", isk.data, 32);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
+		fprintf(stderr, "Can only look up a username of a registered identity.\n");
+		goto fail;
+	}
+
+	value = &kv->value;
+	fprintf(stderr, "value = %p\n", (void *)value->username);
+fail:
+	result = ident_reverse_lookup_rep_init(MESG_TEXT(buf), hdr->msn, value->username);
+	mesg_lock(&peer->state, buf, result);
+
+	/* print_table(ctx->table); */
+	print_nametable(ctx->namestable);
+
+	return result;
+}
+
+static
 void
 serve(int argc, char **argv)
 {
@@ -523,133 +655,30 @@ serve(int argc, char **argv)
 						fprintf(stderr, "sent %lu-byte (%lu-byte) spk submission ack\n",
 							size, MESG_BUF_SIZE(size));
 						break;
-					case IDENT_OPKSSUB_MSG: {
-						struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
-						struct key isk;
-						struct userkv *kv;
-						int i;
-						uint16_t opkcount;
-						uint8_t result = 1;
-
-						if (size < IDENT_OPKSSUB_MSG_BASE_SIZE) {
-							fprintf(stderr, "One-time prekey submission message (%lu) is too short (%lu).\n",
-								size, IDENT_OPKSSUB_MSG_BASE_SIZE);
-							goto opkssub_fail;
-						}
-
-						opkcount = load16_le(msg->opk_count);
-						fprintf(stderr, "OPK count: %d\n", opkcount);
-						if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount)) {
-							fprintf(stderr, "One-time prekey submission message (%lu) is the wrong size (%lu).\n",
-								size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
-							goto opkssub_fail;
-						}
-
-						memcpy(isk.data, peer->state.u.rad.iskc, 32);
-						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
-							fprintf(stderr, "Can only submit one-time prekeys for a registered identity.\n");
-							goto opkssub_fail;
-						}
-
-						result = 0;
-						
-						stbds_arrsetcap(kv->value.opks, opkcount);
-						for (i = 0; i < opkcount; i++) {
-							struct key opk;
-							memcpy(opk.data, msg->opk[i], 32);
-							stbds_arrput(kv->value.opks, opk);
-							displaykey_short("opk", kv->value.opks[stbds_arrlen(kv->value.opks) - 1].data, 32);
-						}
-
-					opkssub_fail:
-						{
-							size_t repsize = ident_opkssub_ack_init(MESG_TEXT(buf), hdr->msn, result);
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
-								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) opk submission ack\n",
-								repsize, MESG_BUF_SIZE(repsize));
-						}
-
-						print_table(ctx.table);
-						/* print_nametable(ctx.namestable); */
+					case IDENT_OPKSSUB_MSG: 
+						size = handle_opkssub(&ctx, peer, buf, nread);
+						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+							sstosa(&pi.addr), pi.addr_len);
+						crypto_wipe(buf, MESG_BUF_SIZE(size));
+						fprintf(stderr, "sent %lu-byte (%lu-byte) opk submission ack\n",
+							size, MESG_BUF_SIZE(size));
 						break;
-					}
-					case IDENT_LOOKUP_MSG: {
-						struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
-						struct key k = {0};
-						uint8_t namelen;
-						if (size < IDENT_LOOKUP_MSG_BASE_SIZE) {
-							fprintf(stderr, "Username lookup message (%lu) is too small (%lu).\n",
-								size, IDENT_LOOKUP_MSG_BASE_SIZE);
-							goto lookup_fail;
-						}
-						namelen = msg->username_len;
-						if (size < IDENT_LOOKUP_MSG_SIZE(namelen)) {
-							fprintf(stderr, "Username lookup message (%lu) is the wrong size (%lu).\n",
-								size, IDENT_LOOKUP_MSG_SIZE(namelen));
-							goto lookup_fail;
-						}
-						if (msg->username[namelen] != '\0') {
-							fprintf(stderr, "Username lookup message is invalid.\n");
-							goto lookup_fail;
-						}
-
-						k = stbds_shget(ctx.namestable, msg->username);
-
-					lookup_fail:
-						{
-							size_t repsize = ident_lookup_rep_init(MESG_TEXT(buf), hdr->msn, k.data);
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
+					case IDENT_LOOKUP_MSG: 
+						size = handle_lookup(&ctx, peer, buf, nread);
+						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
 								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) lookup reply message\n",
-								repsize, MESG_BUF_SIZE(repsize));
-						}
-
-						/* print_table(ctx.table); */
-						print_nametable(ctx.namestable);
+						crypto_wipe(buf, MESG_BUF_SIZE(size));
+						fprintf(stderr, "sent %lu-byte (%lu-byte) lookup reply message\n",
+								size, MESG_BUF_SIZE(size));
 						break;
-					}
-					case IDENT_REVERSE_LOOKUP_MSG: {
-						struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
-						struct key isk;
-						struct userkv *kv;
-						struct userinfo blank = {0}, *value = &blank;
-
-						if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE) {
-							fprintf(stderr, "Username reverse-lookup message (%lu) is too small (%lu).\n",
-								size, IDENT_REVERSE_LOOKUP_MSG_SIZE);
-							goto reverse_lookup_fail;
-						}
-
-						memcpy(isk.data, msg->isk, 32);
-						displaykey("isk", isk.data, 32);
-						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
-							fprintf(stderr, "Can only look up a username of a registered identity.\n");
-							goto reverse_lookup_fail;
-						}
-
-						value = &kv->value;
-						fprintf(stderr, "value = %p\n", (void *)value->username);
-					reverse_lookup_fail:
-						{
-							size_t repsize = ident_reverse_lookup_rep_init(MESG_TEXT(buf), hdr->msn,
-								value->username);
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
-								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) reverse-lookup reply message\n",
-								repsize, MESG_BUF_SIZE(repsize));
-						}
-
-						/* print_table(ctx.table); */
-						print_nametable(ctx.namestable);
+					case IDENT_REVERSE_LOOKUP_MSG: 
+						size = handle_reverse_lookup(&ctx, peer, buf, nread);
+						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+							sstosa(&pi.addr), pi.addr_len);
+						crypto_wipe(buf, MESG_BUF_SIZE(size));
+						fprintf(stderr, "sent %lu-byte (%lu-byte) reverse-lookup reply message\n",
+							size, MESG_BUF_SIZE(size));
 						break;
-					}
 					case IDENT_KEYREQ_MSG: {
 						struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
 						struct key isk;
