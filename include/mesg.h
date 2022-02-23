@@ -1,10 +1,10 @@
 struct mesghdr {
 	uint8_t hdrmac[16];
 	uint8_t nonce[24];
+	uint8_t mac[16];
 	uint8_t msn[4];
 	uint8_t pn[4];
 	uint8_t pk[32];
-	uint8_t mac[16];
 };
 struct mesg {
 	struct mesghdr hdr;
@@ -68,6 +68,7 @@ struct mesg_ratchet_state_common {
 	uint32_t ns;             /* message sequence number (send) */
 	uint32_t nr;             /* message sequence number (recv) */
 	uint32_t pn;             /* previous sending chain length */
+	int prerecv;             /* are we in a pre-receive state? */
 	struct mesgkey_bucket *skipped; /* LL of buckets for missed keys */
 	struct mesgkey_bucket *spare_buckets;  /* pools for these so we don't */
 	struct mesgkey        *spare_mesgkeys; /* need to constantly realloc  */
@@ -158,3 +159,13 @@ extern int mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_S
 extern void mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE]);
 extern void mesg_lock(struct mesg_state *state, uint8_t *buf, size_t text_size);
 extern int mesg_unlock(struct mesg_state *state, uint8_t *buf, size_t buf_size);
+extern size_t send_ohello_message(struct mesg_state *state,
+	struct mesg_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
+	const uint8_t *text, size_t text_size);
+extern size_t send_omsg_message(struct mesg_state *state,
+	struct mesg_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
+	const uint8_t *text, size_t text_size);
+extern size_t send_message(struct mesg_state *state,
+	struct mesg_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
+	const uint8_t *text, size_t text_size);
+extern size_t padme_enc(size_t l);

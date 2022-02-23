@@ -22,13 +22,16 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include "util.h"
+#include "msg.h"
 #include "ident.h"
+#include "messaging.h"
 #include "mesg.h"
 #include "hkdf.h"
 #include "monocypher.h"
 
 #define MAX_SKIP 1000
 #define AD_SIZE  64
+#define AAD_SIZE 104
 
 /* prepares the message by advancing the state machine, preparing the header,
  * encryping the message in place and then encrypting the header in place.
@@ -88,6 +91,12 @@ struct mesgkey_bucket {
 	struct mesgkey_bucket *next;
 };
 
+size_t
+padme_enc(size_t l)
+{
+	return MESG_TEXT_SIZE(padme(MESG_BUF_SIZE(l)));
+}
+
 static void offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32], uint8_t *dh, size_t dh_size);
 
 static
@@ -132,11 +141,11 @@ dh_ratchet(uint8_t rk[32], uint8_t ck[32], uint8_t nhk[32], uint8_t dh[32])
  * mesg should be a struct mesg that has NOT had its header decrypted
  * hdrmac: valid
  * nonce:  valid
- * msn:    encrypted
- * pn:     encrypted
- * pk:     encrypted
- * mac:    encrypted
- * text:   encrypted
+ * mac:    HENCRYPT'd
+ * msn:    HENCRYPT'd
+ * pn:     HENCRYPT'd
+ * pk:     HENCRYPT'd
+ * text:   ENCRYPT'd
  *
  * if the header was decrypted successfully, returns 0
  *       -> WITHOUT WIPING THE HEADER KEY. <-
@@ -171,11 +180,11 @@ try_decrypt_header(const struct mesg_ratchet_state_common *ra,
  * mesg should be a struct mesg that has had its header decrypted
  * hdrmac: should have been wiped already
  * nonce:  should have been wiped already
+ * mac:    valid
  * msn:    valid
  * pn:     valid
  * pk:     valid
- * mac:    valid
- * text:   encrypted
+ * text:   ENCRYPT'd
  *
  * if the message was decrypted successfully, wipes mk and returns 0.
  * otherwise returns -1;
@@ -183,7 +192,7 @@ try_decrypt_header(const struct mesg_ratchet_state_common *ra,
 static
 int
 decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size,
-		const uint8_t *ad)
+		const uint8_t *aad, size_t aad_size)
 {
 	int result;
 
@@ -192,21 +201,38 @@ decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size,
 		mk,
 		zero_nonce,
 		mesg->hdr.mac,
-		ad,
-		AD_SIZE,
+		aad,
+		aad_size,
 		mesg->text,
 		mesg_size);
 
-	if (result == 0) {
+	if (!result) {
 		crypto_wipe(mk, 32);
 	}
 
 	return result;
 }
 
+#if 0
+static
+size_t
+bucket_length(struct mesgkey_bucket *bucket)
+{
+	size_t n = 0;
+	struct mesgkey *mesgkey = bucket->first;
+	while (mesgkey) {
+		n++;
+		mesgkey = mesgkey->next;
+	}
+	return n;
+}
+#endif
+
 static
 int
-try_skipped_message_keys(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
+try_skipped_message_keys(struct mesg_ratchet_state_common *ra,
+	struct mesg *mesg, size_t mesg_size,
+	const uint8_t *aad, size_t aad_size)
 {
 	struct mesgkey_bucket *prev_bucket, *bucket;
 	struct mesgkey *prev_mesgkey, *mesgkey;
@@ -232,7 +258,7 @@ try_skipped_message_keys(struct mesg_ratchet_state_common *ra, struct mesg *mesg
 			/* header decrypted and the correct msn */
 
 			/* attempt to decrypt the message */
-			if (decrypt_message(mesgkey->mk, mesg, mesg_size, ra->ad))
+			if (decrypt_message(mesgkey->mk, mesg, mesg_size, aad, aad_size))
 				return -1;
 
 			/* if successful, remove the struct mesgkey from the
@@ -403,26 +429,37 @@ int
 try_decrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
 {
 	uint8_t mk[32];
-	int result;
+	uint8_t aad[AAD_SIZE];
+	int result = -1;
 
-	if (!try_skipped_message_keys(ra, mesg, mesg_size))
+	/* AAD = (AD||ENC_HEADER) */
+	memcpy(aad,           ra->ad,        AD_SIZE);
+	memcpy(aad + AD_SIZE, mesg->hdr.msn, AAD_SIZE - AD_SIZE);
+
+	if (!try_skipped_message_keys(ra, mesg, mesg_size, aad, AAD_SIZE)) {
+		crypto_wipe(aad, AAD_SIZE);
 		return 0;
+	}
 
 	if (try_decrypt_header(ra, ra->hkr, &mesg->hdr)) {
 		if (try_decrypt_header(ra, ra->nhkr, &mesg->hdr))
-			return -1;
+			goto fail;
 		if (skip_message_keys(ra, load32_le(mesg->hdr.pn)))
-			return -1;
+			goto fail;
 		step_receiver_ratchet(ra, &mesg->hdr);
 	}
 	if (skip_message_keys(ra, load32_le(mesg->hdr.msn)))
-		return -1;
+		goto fail;
 
 	symm_ratchet(mk, ra->ckr);
 	ra->nr++;
 
-	result = decrypt_message(mk, mesg, mesg_size, ra->ad);
+	result = decrypt_message(mk, mesg, mesg_size, aad, AAD_SIZE);
+	if (!result)
+		ra->prerecv = 0;
+fail:
 	crypto_wipe(mk, 32);
+	crypto_wipe(aad, AAD_SIZE);
 	return result;
 }
 
@@ -431,41 +468,13 @@ void
 encrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
 {
 	uint8_t mk[32];
+	uint8_t aad[AAD_SIZE];
 
 	symm_ratchet(mk, ra->cks);
-
-	/* displaykey_short("dhkr",     ra->dhkr,     32); */
-	/* displaykey_short("dhks",     ra->dhks,     32); */
-	/* displaykey_short("dhks_prv", ra->dhks_prv, 32); */
-	/* displaykey_short("rk",       ra->rk,       32); */
-	/* displaykey_short("cks",      ra->cks,      32); */
-	/* displaykey_short("ckr",      ra->ckr,      32); */
-	/* displaykey_short("hks",      ra->hks,      32); */
-	/* displaykey_short("hkr",      ra->hkr,      32); */
-	/* displaykey_short("nhks",     ra->nhks,     32); */
-	/* displaykey_short("nhkr",     ra->nhkr,     32); */
-	/* displaykey_short("ad",       ra->ad,       64); */
-	/* displaykey_short("cv",       ra->cv,       32); */
-	/* fprintf(stderr, "ns:\t%u\n", ra->ns); */
-	/* fprintf(stderr, "nr:\t%u\n", ra->nr); */
-	/* fprintf(stderr, "pn:\t%u\n", ra->pn); */
 
 	store32_le(mesg->hdr.msn, ra->ns);
 	store32_le(mesg->hdr.pn, ra->pn);
 	memcpy(mesg->hdr.pk, ra->dhks, 32);
-
-	crypto_lock_aead(
-		mesg->hdr.mac,
-		mesg->text,
-		mk,
-		zero_nonce, /* (each message is sent using a one-use secret key,
-		                so AEAD can use a constant nonce)
-			       (perhaps this should be some other constant to
-				provide domain separation?)*/
-		ra->ad,
-		AD_SIZE,
-		mesg->text,
-		mesg_size);
 
 	randbytes(mesg->hdr.nonce, 24);
 
@@ -479,14 +488,24 @@ encrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t 
 		mesg->hdr.msn,
 		sizeof(struct mesghdr) - offsetof(struct mesghdr, msn));
 
-	/* displaykey_short("hk", ra->hks, 32); */
-	/* displaykey_short("nonce", mesg->hdr.nonce, 24); */
-	/* displaykey_short("hdrmac", mesg->hdr.hdrmac, 16); */
-	/* displaykey_short("ra->ad", ra->ad, AD_SIZE); */
+	memcpy(aad,           ra->ad,        AD_SIZE);
+	memcpy(aad + AD_SIZE, mesg->hdr.msn, AAD_SIZE - AD_SIZE);
 
-	/* displaykey("hdr", (void *)&mesg->hdr, sizeof(struct mesghdr)); */
+	crypto_lock_aead(
+		mesg->hdr.mac,
+		mesg->text,
+		mk,
+		zero_nonce, /* (each message is sent using a one-use secret key,
+		                so AEAD can use a constant nonce)
+			       (perhaps this should be some other constant to
+				provide domain separation?)*/
+		aad,
+		AAD_SIZE,
+		mesg->text,
+		mesg_size);
 
 	crypto_wipe(mk, 32);
+	crypto_wipe(aad, AAD_SIZE);
 
 	ra->ns++;
 }
@@ -515,12 +534,16 @@ hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 void
 mesg_lock(struct mesg_state *state, uint8_t *buf, size_t text_size)
 {
+	/* fprintf(stderr, "\nEncrypting message with size %lu (%lu)\n", */
+	/* 	text_size, MESG_BUF_SIZE(text_size)); */
 	encrypt_message(&state->u.ra.rac, (struct mesg *)buf, text_size);
 }
 
 int
 mesg_unlock(struct mesg_state *state, uint8_t *buf, size_t buf_size)
 {
+	/* fprintf(stderr, "\nTrying to decrypt message with size %lu (%lu)\n", */
+	/* 	MESG_TEXT_SIZE(buf_size), buf_size); */
 	return try_decrypt_message(&state->u.ra.rac,
 		(struct mesg *)buf, buf_size - sizeof(struct mesg));
 }
@@ -640,15 +663,21 @@ mesg_hshake_bprepare(struct mesg_state *state,
 
 	crypto_wipe(state, sizeof *state);
 
+	displaykey("spkb.prv", spkb_prv, 32);
+	displaykey("ikb.prv",  ikb_prv,  32);
+	displaykey("opkb.prv", opkb_prv, 32);
+	displaykey("ika",      ika,      32);
+	displaykey("eka",      eka,      32);
+
 	crypto_x25519(dh,      spkb_prv, ika);
 	crypto_x25519(dh + 32, ikb_prv,  eka);
 	crypto_x25519(dh + 64, spkb_prv, eka);
 
-	if (crypto_verify32(opkb, zero_key)) {
+	if (!crypto_verify32(opkb, zero_key)) {
 		offline_shared_secrets(ra->rk, ra->nhks, ra->nhkr, dh, 96);
 	} else {
 		crypto_x25519(dh + 96, opkb_prv, eka);
-		offline_shared_secrets(ra->rk, ra->nhks, ra->nhkr, dh, 96);
+		offline_shared_secrets(ra->rk, ra->nhks, ra->nhkr, dh, 128);
 	}
 
 	memcpy(ra->dhks,     spkb,     32);
@@ -830,6 +859,7 @@ mesg_hshake_aprepare(struct mesg_state *state,
 
 	generate_kex_keypair(rap->eka, eka_prv);
 
+	rap->rac.prerecv = 1;
 	memcpy(rap->ika,  ika,  32);
 	memcpy(rap->spkb, spkb, 32);
 	memcpy(rap->opkb, opkb, 32);
@@ -877,8 +907,85 @@ mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize)
 		msg->nonce,
 		&msg->msgtype,
 		sizeof(struct hshake_ohello_msg) - offsetof(struct hshake_ohello_msg, msgtype));
-	fprintf(stderr, "Encrypting message of size %lu\n", msgsize);
 	mesg_lock(state, msg->message, msgsize);
+}
+
+size_t
+send_ohello_message(struct mesg_state *state, struct mesg_state *p2pstate,
+		uint8_t recipient_isk[32], uint8_t *buf,
+		const uint8_t *text, size_t text_size)
+{
+	struct msg_forward_msg *msg = (void *)MESG_TEXT(buf);
+	uint8_t *smsg = MESG_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of encapsulated message */
+	uint8_t *cbuf = smsg + MESG_P2PHELLO_SIZE(0); /* start of internal message */
+	uint8_t *ctext = MESG_TEXT(cbuf);
+	uint16_t msglength;
+
+	/* actual peer-to-peer message */
+	if (text != NULL) {
+		memcpy(ctext + 2, text, text_size);
+	}
+	store16_le(ctext, text_size);
+
+	msglength = padme_enc(MESG_P2PHELLO_SIZE(2 + text_size)) - MESG_P2PHELLO_SIZE(0);
+	store16_le(cbuf - 2, MESG_BUF_SIZE(msglength));
+	mesg_hshake_ahello(p2pstate, smsg, msglength);
+
+	/* message-forwarding message to server */
+	msg->msg.proto = PROTO_MSG;
+	msg->msg.type = MSG_FORWARD_MSG;
+	memcpy(msg->isk, recipient_isk, 32);
+	msg->message_count = 1;
+	store16_le(msg->messages, MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)));
+
+	{
+		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength))));
+		mesg_lock(state, buf, msgsize);
+		return msgsize;
+	}
+}
+
+size_t
+send_omsg_message(struct mesg_state *state, struct mesg_state *p2pstate,
+		uint8_t recipient_isk[32], uint8_t *buf,
+		const uint8_t *text, size_t text_size)
+{
+	struct msg_forward_msg *msg = (void *)MESG_TEXT(buf);
+	uint8_t *cbuf = MESG_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of internal message */
+	uint8_t *ctext = MESG_TEXT(cbuf);
+	uint16_t msglength;
+
+	/* actual peer-to-peer message */
+	if (text != NULL) {
+		memcpy(ctext + 2, text, text_size);
+	}
+	store16_le(ctext, text_size);
+	msglength = padme_enc(text_size + 2);
+	mesg_lock(p2pstate, cbuf, msglength);
+
+	/* message-forwarding message to server */
+	msg->msg.proto = PROTO_MSG;
+	msg->msg.type = MSG_FORWARD_MSG;
+	store16_le(msg->msg.len, MSG_FORWARD_MSG_SIZE(2 + MESG_BUF_SIZE(msglength)));
+	memcpy(msg->isk, recipient_isk, 32);
+	msg->message_count = 1;
+	store16_le(msg->messages, MESG_BUF_SIZE(msglength));
+
+	{
+		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + MESG_BUF_SIZE(msglength)));
+		mesg_lock(state, buf, msgsize);
+		return msgsize;
+	}
+}
+
+size_t
+send_message(struct mesg_state *state, struct mesg_state *p2pstate,
+		uint8_t recipient_isk[32], uint8_t *buf,
+		const uint8_t *text, size_t text_size)
+{
+	/* fprintf(stderr, "prerecv? %d\n", p2pstate->u.ra.rac.prerecv); */
+	return (p2pstate->u.ra.rac.prerecv ? send_ohello_message : send_omsg_message)
+		(state, p2pstate, recipient_isk, buf, text, text_size);
 }
 
 #if 0
