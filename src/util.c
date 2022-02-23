@@ -72,7 +72,7 @@ randbytes(uint8_t *data, size_t size)
 void
 randusername(char *username, const char *base)
 {
-	uint8_t rand[4]; /* -fstack-protector */
+	uint8_t rand[8]; /* -fstack-protector */
 
 	randbytes(rand, 2);
 	sprintf(username, "%s%d", base, load16_le(rand));

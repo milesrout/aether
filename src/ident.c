@@ -8,7 +8,6 @@
 #include "stb_ds.h"
 #include "monocypher.h"
 
-#include "isks.h"
 #include "util.h"
 #include "mesg.h"
 #include "msg.h"
