@@ -218,6 +218,77 @@ print_table(struct userkv *table)
 	}
 }
 
+struct server_ctx {
+	struct peertable peertable;
+	struct userkv *table;
+	struct usernamev *namestable;
+};
+
+static
+ssize_t
+handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
+{
+	struct mesghdr *hdr = MESG_HDR(buf);
+	uint8_t *text = MESG_TEXT(buf);
+	size_t size = MESG_TEXT_SIZE(nread);
+	struct ident_register_msg *msg = (struct ident_register_msg *)text;
+	struct key isk;
+	struct userinfo ui = {0};
+	struct userkv *kv;
+	uint8_t failure = 1;
+	ssize_t result = -1;
+
+	if (size < IDENT_REGISTER_MSG_BASE_SIZE) {
+		fprintf(stderr, "Registration message (%lu) is too short (%lu).\n",
+			size, IDENT_REGISTER_MSG_BASE_SIZE);
+		goto fail;
+	}
+
+	if (size < IDENT_REGISTER_MSG_SIZE(msg->username_len)) {
+		fprintf(stderr, "Registration message (%lu) is the wrong size (%lu).\n",
+			size, IDENT_REGISTER_MSG_SIZE(msg->username_len));
+		goto fail;
+	}
+
+	if (msg->username[msg->username_len] != '\0') {
+		fprintf(stderr, "Cannot register a username that is not a valid string.\n");
+		goto fail;
+	}
+
+	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) != NULL) {
+		if (strcmp(kv->value.username, (const char *)msg->username) == 0) {
+			result = 0;
+			goto fail;
+		}
+		fprintf(stderr, "Cannot register an already-registered identity key.\n");
+		goto fail;
+	}
+
+	if (stbds_shgetp_null(ctx->namestable, msg->username) != NULL) {
+		fprintf(stderr, "Cannot register an already-registered username.\n");
+		goto fail;
+	}
+
+	failure = 0;
+
+	crypto_from_eddsa_public(ui.ik, isk.data);
+	stbds_shput(ctx->namestable, msg->username, isk);
+	ui.username = ctx->namestable[stbds_shlen(ctx->namestable) - 1].key;
+	ui.peer = peer;
+	fprintf(stderr, "username: %s\n", ui.username);
+	stbds_hmput(ctx->table, isk, ui);
+
+fail:
+	result = ident_register_ack_init(MESG_TEXT(buf), hdr->msn, failure);
+	mesg_lock(&peer->state, buf, result);
+
+	print_table(ctx->table);
+	print_nametable(ctx->namestable);
+
+	return result;
+}
+
 static
 void
 serve(int argc, char **argv)
@@ -226,12 +297,13 @@ serve(int argc, char **argv)
 	struct addrinfo *result, *rp;
 	int fd = -1;
 	int gai;
-	struct peertable peertable;
 	size_t nread;
 	uint8_t buf[65536];
 	const char *host, *port;
-	struct userkv *table = NULL;
-	struct usernamev *namestable = NULL;
+	/* struct peertable peertable; */
+	/* struct userkv *table = NULL; */
+	/* struct usernamev *namestable = NULL; */
+	struct server_ctx ctx = {0};
 
 	if (argc < 2 || argc > 4)
 		usage();
@@ -239,13 +311,13 @@ serve(int argc, char **argv)
 	host = argc < 3? "127.0.0.1" : argv[2];
 	port = argc < 4? "3443" : argv[3];
 
-	if (peertable_init(&peertable)) {
+	if (peertable_init(&ctx.peertable)) {
 		fprintf(stderr, "Couldn't initialise peer table.\n");
 		exit(EXIT_FAILURE);
 	}
 
 	memset(buf, 0, 65536);
-	stbds_sh_new_arena(namestable);
+	stbds_sh_new_arena(ctx.namestable);
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -297,10 +369,10 @@ serve(int argc, char **argv)
 				host, service);
 		} else fprintf(stderr, "Peer on unknown host and port. ");
 
-		peer = peer_getbyaddr(&peertable, sstosa(&pi.addr), pi.addr_len);
+		peer = peer_getbyaddr(&ctx.peertable, sstosa(&pi.addr), pi.addr_len);
 		if (peer == NULL) {
 			fprintf(stderr, "Peer not found. ");
-			peer = peer_add(&peertable, &pi);
+			peer = peer_add(&ctx.peertable, &pi);
 			if (peer == NULL) {
 				fprintf(stderr, "Failed to add peer to peertable.\n");
 				abort();
@@ -391,60 +463,14 @@ serve(int argc, char **argv)
 				switch (msg->proto) {
 				case PROTO_IDENT:
 					switch (msg->type) {
-					case IDENT_REGISTER_MSG: {
-						struct ident_register_msg *msg = (struct ident_register_msg *)text;
-						struct key isk;
-						struct userinfo ui = {0};
-						struct userkv *kv;
-						uint8_t result = 1;
-						if (size < IDENT_REGISTER_MSG_BASE_SIZE) {
-							fprintf(stderr, "Registration message (%lu) is too short (%lu).\n",
-								size, IDENT_REGISTER_MSG_BASE_SIZE);
-							goto register_fail;
-						}
-						if (size < IDENT_REGISTER_MSG_SIZE(msg->username_len)) {
-							fprintf(stderr, "Registration message (%lu) is the wrong size (%lu).\n",
-								size, IDENT_REGISTER_MSG_SIZE(msg->username_len));
-							goto register_fail;
-						}
-						if (msg->username[msg->username_len] != '\0') {
-							fprintf(stderr, "Cannot register a username that is not a valid string.\n");
-							goto register_fail;
-						}
-						memcpy(isk.data, peer->state.u.rad.iskc, 32);
-						if ((kv = stbds_hmgetp_null(table, isk)) != NULL) {
-							if (strcmp(kv->value.username, (const char *)msg->username) == 0) {
-								result = 0;
-								goto register_fail;
-							}
-							fprintf(stderr, "Cannot register an already-registered identity key.\n");
-							goto register_fail;
-						}
-						if (stbds_shgetp_null(namestable, msg->username) != NULL) {
-							fprintf(stderr, "Cannot register an already-registered username.\n");
-							goto register_fail;
-						}
-						result = 0;
-						crypto_from_eddsa_public(ui.ik, isk.data);
-						stbds_shput(namestable, msg->username, isk);
-						ui.username = namestable[stbds_shlen(namestable) - 1].key;
-						ui.peer = peer;
-						fprintf(stderr, "username: %s\n", ui.username);
-						stbds_hmput(table, isk, ui);
-					register_fail:
-						{
-							size_t repsize = ident_register_ack_init(MESG_TEXT(buf), hdr->msn, result);
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
-								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) registration ack\n",
-								repsize, MESG_BUF_SIZE(repsize));
-						}
-						print_table(table);
-						print_nametable(namestable);
+					case IDENT_REGISTER_MSG:
+						size = handle_register(&ctx, peer, buf, nread);
+						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+							sstosa(&pi.addr), pi.addr_len);
+						crypto_wipe(buf, MESG_BUF_SIZE(size));
+						fprintf(stderr, "sent %lu-byte (%lu-byte) registration ack\n",
+							size, MESG_BUF_SIZE(size));
 						break;
-					}
 					case IDENT_SPKSUB_MSG: {
 						struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
 						struct key isk;
@@ -457,7 +483,7 @@ serve(int argc, char **argv)
 						}
 
 						memcpy(isk.data, peer->state.u.rad.iskc, 32);
-						if ((kv = stbds_hmgetp_null(table, isk)) == NULL) {
+						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
 							fprintf(stderr, "Can only submit a signed prekey for a registered identity.\n");
 							goto spksub_fail;
 						}
@@ -479,8 +505,8 @@ serve(int argc, char **argv)
 							fprintf(stderr, "sent %lu-byte (%lu-byte) spk submission ack\n",
 								repsize, MESG_BUF_SIZE(repsize));
 						}
-						print_table(table);
-						/* print_nametable(namestable); */
+						print_table(ctx.table);
+						/* print_nametable(ctx.namestable); */
 						break;
 					}
 					case IDENT_OPKSSUB_MSG: {
@@ -506,7 +532,7 @@ serve(int argc, char **argv)
 						}
 
 						memcpy(isk.data, peer->state.u.rad.iskc, 32);
-						if ((kv = stbds_hmgetp_null(table, isk)) == NULL) {
+						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
 							fprintf(stderr, "Can only submit one-time prekeys for a registered identity.\n");
 							goto opkssub_fail;
 						}
@@ -532,8 +558,8 @@ serve(int argc, char **argv)
 								repsize, MESG_BUF_SIZE(repsize));
 						}
 
-						print_table(table);
-						/* print_nametable(namestable); */
+						print_table(ctx.table);
+						/* print_nametable(ctx.namestable); */
 						break;
 					}
 					case IDENT_LOOKUP_MSG: {
@@ -556,7 +582,7 @@ serve(int argc, char **argv)
 							goto lookup_fail;
 						}
 
-						k = stbds_shget(namestable, msg->username);
+						k = stbds_shget(ctx.namestable, msg->username);
 
 					lookup_fail:
 						{
@@ -569,8 +595,8 @@ serve(int argc, char **argv)
 								repsize, MESG_BUF_SIZE(repsize));
 						}
 
-						/* print_table(table); */
-						print_nametable(namestable);
+						/* print_table(ctx.table); */
+						print_nametable(ctx.namestable);
 						break;
 					}
 					case IDENT_REVERSE_LOOKUP_MSG: {
@@ -587,7 +613,7 @@ serve(int argc, char **argv)
 
 						memcpy(isk.data, msg->isk, 32);
 						displaykey("isk", isk.data, 32);
-						if ((kv = stbds_hmgetp_null(table, isk)) == NULL) {
+						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
 							fprintf(stderr, "Can only look up a username of a registered identity.\n");
 							goto reverse_lookup_fail;
 						}
@@ -606,8 +632,8 @@ serve(int argc, char **argv)
 								repsize, MESG_BUF_SIZE(repsize));
 						}
 
-						/* print_table(table); */
-						print_nametable(namestable);
+						/* print_table(ctx.table); */
+						print_nametable(ctx.namestable);
 						break;
 					}
 					case IDENT_KEYREQ_MSG: {
@@ -624,7 +650,7 @@ serve(int argc, char **argv)
 						}
 
 						memcpy(isk.data, msg->isk, 32);
-						if ((kv = stbds_hmgetp_null(table, isk)) == NULL) {
+						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
 							fprintf(stderr, "Can only request a key bundle for a registered identity.\n");
 							goto keyreq_fail;
 						}
@@ -649,8 +675,8 @@ serve(int argc, char **argv)
 								repsize, MESG_BUF_SIZE(repsize));
 						}
 
-						print_table(table);
-						/* print_nametable(namestable); */
+						print_table(ctx.table);
+						/* print_nametable(ctx.namestable); */
 						break;
 					}
 					default:
@@ -676,7 +702,7 @@ serve(int argc, char **argv)
 						}
 
 						memcpy(isk.data, peer->state.u.rad.iskc, 32);
-						if ((kv = stbds_hmgetp_null(table, isk)) == NULL) {
+						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
 							fprintf(stderr, "Only registered identities may fetch messages.\n");
 							goto fetch_fail;
 						}
@@ -717,8 +743,8 @@ serve(int argc, char **argv)
 								repsize, MESG_BUF_SIZE(repsize));
 						}
 
-						/* print_table(table); */
-						/* print_nametable(namestable); */
+						/* print_table(ctx.table); */
+						/* print_nametable(ctx.namestable); */
 						break;
 					}
 					case MSG_FORWARD_MSG: {
@@ -755,7 +781,7 @@ serve(int argc, char **argv)
 						}
 
 						memcpy(isk.data, msg->isk, 32);
-						if ((kv = stbds_hmgetp_null(table, isk)) == NULL) {
+						if ((kv = stbds_hmgetp_null(ctx.table, isk)) == NULL) {
 							fprintf(stderr, "Can only forward messages to a registered identity.\n");
 							goto forward_fail;
 						}
@@ -812,8 +838,8 @@ serve(int argc, char **argv)
 								repsize, MESG_BUF_SIZE(repsize));
 						}
 
-						/* print_table(table); */
-						/* print_nametable(namestable); */
+						/* print_table(ctx.table); */
+						/* print_nametable(ctx.namestable); */
 						break;
 					}
 					default:
