@@ -101,17 +101,12 @@ struct hshake_hello_msg {
 	uint8_t hidden[32];
 	uint8_t mac[16];
 	uint8_t iskc[32];    /* client's long-term key-signing (identity) key */
-	/* uint8_t ikc[32];     /1* client's long-term key-exchng. (identity) key *1/ */
 	uint8_t ekc[32];     /* client's ephemeral key-exchange key */
 	uint8_t cvc[32];     /* client's challenge value */
-	/* uint8_t ikc_sig[64]; /1* signed by iskc *1/ */
-	uint8_t ekc_sig[64]; /* signed by iskc */
 };
 struct hshake_reply_msg {
 	uint8_t mac[16];
 	uint8_t eks[32];     /* server's ephemeral key-exchange key */
-	uint8_t eks_sig[64]; /* signed by iskd */
-	uint8_t cvc_sig[64]; /* signed by iskd */
 	uint8_t cvs[32];     /* server's challenge value */
 };
 struct hshake_ohello_msg {
@@ -138,7 +133,6 @@ extern int mesg_example4(int fd);
 #define MESG_P2PHELLO_SIZE(n) (sizeof(struct hshake_ohello_msg) + (n))
 /* MESG_HSHAKE_SIZE = MAX( MESG_{HELLO,REPLY}_SIZE ) */
 #define MESG_HSHAKE_SIZE MESG_HELLO_SIZE
-#define MESG_HSHAKE_P2PSIZE MESG_P2PHELLO_SIZE
 extern int mesg_hshake_aprepare(struct mesg_state *state,
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
 	const uint8_t his_sign_public_key[32], const uint8_t his_public_key[32],

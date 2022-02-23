@@ -57,7 +57,7 @@ CFLAGS    += $(WARNINGS)
 LDFLAGS   += -pie -fPIE
 LDLIBS    += -lm
 
-VALGRIND_FLAGS += -s --show-leak-kinds=all --leak-check=full
+VALGRIND_FLAGS += -s --show-leak-kinds=all --leak-check=full --track-origins=yes
 
 .PHONY: $(TARGET)
 $(TARGET): build/$(BUILD)/$(TARGET)

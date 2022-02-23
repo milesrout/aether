@@ -149,7 +149,6 @@ struct stored_message {
 
 struct userinfo {
 	uint8_t ik[32];
-	/* uint8_t ik_sig[64]; */
 	uint8_t spk[32];
 	uint8_t spk_sig[64];
 	struct key *opks;
@@ -278,21 +277,21 @@ serve(int argc, char **argv)
 		struct peer_init pi = {0};
 		char host[NI_MAXHOST], service[NI_MAXSERV];
 
+		fprintf(stderr, "\n");
+
 		pi.addr_len = sizeof(pi.addr);
 		nread = safe_recvfrom(fd, buf, 65536,
 			&pi.addr, &pi.addr_len);
+
+		fprintf(stderr, "Received %zu bytes.\n", nread);
 
 		if (!getnameinfo(sstosa(&pi.addr), pi.addr_len,
 				host, NI_MAXHOST,
 				service, NI_MAXSERV,
 				NI_NUMERICHOST|NI_NUMERICSERV)) {
-			fprintf(stderr, "Peer %s on port %s\n",
+			fprintf(stderr, "Peer %s on port %s. ",
 				host, service);
-		} else {
-			fprintf(stderr, "Peer on unknown host and port\n");
-		}
-
-		fprintf(stderr, "Received %zu bytes. ", nread);
+		} else fprintf(stderr, "Peer on unknown host and port. ");
 
 		peer = peer_getbyaddr(&peertable, sstosa(&pi.addr), pi.addr_len);
 		if (peer == NULL) {
@@ -302,9 +301,7 @@ serve(int argc, char **argv)
 				fprintf(stderr, "Failed to add peer to peertable.\n");
 				abort();
 			}
-		} else {
-			fprintf(stderr, "Peer in table. ");
-		}
+		} else fprintf(stderr, "Peer in table. ");
 
 		fprintf(stderr, "Peer status: %d\n", peer->status);
 
@@ -360,6 +357,11 @@ serve(int argc, char **argv)
 			fprintf(stderr, "Whoops it wasn't a HELLO... at least not a valid one\n");
 			/* Fall through: check if it's a real message */
 		}
+
+		/* if (peer->status != PEER_ACTIVE) */
+		/* 	continue; */
+
+		fprintf(stderr, "nread: %lu\n", nread);
 
 		if (nread > MESG_BUF_SIZE(0)) {
 			struct mesghdr *hdr = MESG_HDR(buf);

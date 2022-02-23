@@ -102,6 +102,35 @@ safe_read_nonblock(int fd, uint8_t *buf, size_t max_size_p1)
 }
 
 size_t
+safe_read_timeout(int fd, uint8_t *buf, size_t max_size_p1, time_t timeout)
+{
+	struct timeval tv = { .tv_sec = timeout, .tv_usec = 0 };
+	ssize_t nread;
+
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+
+	do nread = recv(fd, buf, max_size_p1, 0);
+	while (nread == -1 && errno == EINTR);
+
+	tv.tv_sec = 0;
+	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+
+	if (nread == -1 && errno == EAGAIN) {
+		return 0;
+	}
+	if (nread == -1) {
+		fprintf(stderr, "Error while reading from socket (%d).\n", errno);
+		exit(EXIT_FAILURE);
+	}
+	if ((size_t)nread == max_size_p1) {
+		fprintf(stderr, "Peer sent a packet that is too large.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	return nread;
+}
+
+size_t
 safe_recvfrom(int fd, uint8_t *buf, size_t max_size_p1,
 		struct sockaddr_storage *peeraddr, socklen_t *peeraddr_len)
 {

@@ -1,0 +1,17 @@
+digraph statemachine {
+	graph [ordering="out"];
+	node [style="filled", color="cornflowerblue"];
+	ratio = fill;
+
+	hello [label="send HELLO"];
+	register [label="send REGISTER"];
+	spksub [label="send SPKSUB"];
+	opkssub [label="send OPKSSUB"];
+	hello -> register [label="receive REPLY"];
+	register -> spksub [label="receive REGISTER ACK"];
+	spksub -> opkssub [label="receive SPKSUB ACK"];
+	opkssub -> interactive [label="receive OPKSSUB ACK"];
+
+	interactive -> interactive [label="read text input and send FORWARD"];
+	interactive:w -> interactive:w [label="receive fetch and print it"];
+}

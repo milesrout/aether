@@ -25,13 +25,13 @@ fill_opks(struct ident_state *state, ptrdiff_t max)
 	num = stbds_hmlen(state->opks);
 	for (i = 0; i < max - num; i++) {
 		generate_kex_keypair(kp.key.data, kp.prv);
-		fprintf(stderr, "state->opks = %p\n", (void *)state->opks);
 		stbds_hmputs(state->opks, kp);
-		displaykey_short("opk", kp.key.data, 32);
 	}
 
 	return max - num;
 }
+
+#define MAX_OPKS 32
 
 size_t
 ident_opkssub_msg_init(struct ident_state *state, uint8_t *buf)
@@ -41,11 +41,11 @@ ident_opkssub_msg_init(struct ident_state *state, uint8_t *buf)
 	int count = 0;
 	int i;
 
-	count = fill_opks(state, 32);
+	count = fill_opks(state, MAX_OPKS);
 
 	msg->msgtype = IDENT_OPKSSUB_MSG;
 	for (i = 0; i < count; i++) {
-		memcpy(next_key, state->opks[32 - count + i].key.data, 32);
+		memcpy(next_key, state->opks[MAX_OPKS - count + i].key.data, 32);
 		next_key += 32;
 	}
 	store16_le(msg->opk_count, count);
