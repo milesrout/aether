@@ -19,7 +19,7 @@ struct peer {
 	struct sockaddr_storage addr;
 	socklen_t               addr_len;
 	uint64_t		hash;
-	struct mesg_state       state;
+	struct packet_state     state;
 };
 enum peer_status {
 	PEER_NEW,		/* the initial state of all peers */

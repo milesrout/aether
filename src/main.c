@@ -34,7 +34,7 @@
 
 #include "hkdf.h"
 #include "util.h"
-#include "mesg.h"
+#include "packet.h"
 #include "peertable.h"
 #include "proof.h"
 #include "msg.h"
@@ -68,7 +68,7 @@ client(int argc, char **argv)
 	int fd;
 	uint8_t iskc[32], iskc_prv[32];
 	uint8_t ikc[32], ikc_prv[32];
-	struct mesg_state state;
+	struct packet_state state;
 	const char *host, *port;
 
 	if (argc < 2 || argc > 4)
@@ -89,44 +89,44 @@ client(int argc, char **argv)
 		uint8_t buf[65536];
 		size_t nread;
 
-		mesg_hshake_cprepare(&state, isks, iks, iskc, iskc_prv, ikc, ikc_prv);
-		mesg_hshake_chello(&state, buf);
-		safe_write(fd, buf, MESG_HELLO_SIZE);
-		crypto_wipe(buf, MESG_HELLO_SIZE);
+		packet_hshake_cprepare(&state, isks, iks, iskc, iskc_prv, ikc, ikc_prv);
+		packet_hshake_chello(&state, buf);
+		safe_write(fd, buf, PACKET_HELLO_SIZE);
+		crypto_wipe(buf, PACKET_HELLO_SIZE);
 
-		nread = safe_read(fd, buf, MESG_REPLY_SIZE + 1);
-		if (nread != MESG_REPLY_SIZE) {
+		nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
+		if (nread != PACKET_REPLY_SIZE) {
 			fprintf(stderr, "Received the wrong message.\n");
-			crypto_wipe(buf, MESG_REPLY_SIZE);
+			crypto_wipe(buf, PACKET_REPLY_SIZE);
 			return -1;
 		}
 
-		if (mesg_hshake_cfinish(&state, buf)) {
+		if (packet_hshake_cfinish(&state, buf)) {
 			fprintf(stderr, "Reply message cannot be decrypted.\n");
-			crypto_wipe(buf, MESG_REPLY_SIZE);
+			crypto_wipe(buf, PACKET_REPLY_SIZE);
 			return -1;
 		}
 
-		crypto_wipe(buf, MESG_REPLY_SIZE);
+		crypto_wipe(buf, PACKET_REPLY_SIZE);
 
-		memset(MESG_TEXT(buf), 0x77, 24);
-		mesg_lock(&state, buf, 24);
+		memset(PACKET_TEXT(buf), 0x77, 24);
+		packet_lock(&state, buf, 24);
 
-		safe_write(fd, buf, MESG_BUF_SIZE(24));
-		crypto_wipe(buf, MESG_BUF_SIZE(24));
+		safe_write(fd, buf, PACKET_BUF_SIZE(24));
+		crypto_wipe(buf, PACKET_BUF_SIZE(24));
 		fprintf(stderr, "sent 24-byte message\n");
 
 		nread = safe_read(fd, buf, 65536);
 
-		while (nread > MESG_BUF_SIZE(1)) {
-			if (mesg_unlock(&state, buf, nread)) {
+		while (nread > PACKET_BUF_SIZE(1)) {
+			if (packet_unlock(&state, buf, nread)) {
 				break;
 			}
 
-			if (nread > MESG_BUF_SIZE(1)) {
-				mesg_lock(&state, buf, MESG_TEXT_SIZE(nread) - 1);
+			if (nread > PACKET_BUF_SIZE(1)) {
+				packet_lock(&state, buf, PACKET_TEXT_SIZE(nread) - 1);
 				safe_write(fd, buf, nread - 1);
-				fprintf(stderr, "sent %lu-byte message\n", MESG_TEXT_SIZE(nread) - 1);
+				fprintf(stderr, "sent %lu-byte message\n", PACKET_TEXT_SIZE(nread) - 1);
 			}
 
 			crypto_wipe(buf, 65536);
@@ -228,9 +228,9 @@ static
 ssize_t
 handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
-	struct mesghdr *hdr = MESG_HDR(buf);
-	uint8_t *text = MESG_TEXT(buf);
-	size_t size = MESG_TEXT_SIZE(nread);
+	struct packethdr *hdr = PACKET_HDR(buf);
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_register_msg *msg = (struct ident_register_msg *)text;
 	struct key isk;
 	struct userinfo ui = {0};
@@ -280,8 +280,8 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 	stbds_hmput(ctx->table, isk, ui);
 
 fail:
-	result = ident_register_ack_init(MESG_TEXT(buf), hdr->msn, failure);
-	mesg_lock(&peer->state, buf, result);
+	result = ident_register_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
+	packet_lock(&peer->state, buf, result);
 
 	print_table(ctx->table);
 	print_nametable(ctx->namestable);
@@ -293,9 +293,9 @@ static
 ssize_t
 handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
-	struct mesghdr *hdr = MESG_HDR(buf);
-	uint8_t *text = MESG_TEXT(buf);
-	size_t size = MESG_TEXT_SIZE(nread);
+	struct packethdr *hdr = PACKET_HDR(buf);
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -324,8 +324,8 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	memcpy(kv->value.spk_sig, msg->spk_sig, 64);
 
 fail:
-	result = ident_spksub_ack_init(MESG_TEXT(buf), hdr->msn, failure);
-	mesg_lock(&peer->state, buf, result);
+	result = ident_spksub_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
+	packet_lock(&peer->state, buf, result);
 
 	print_table(ctx->table);
 	/* print_nametable(ctx->namestable); */
@@ -337,9 +337,9 @@ static
 ssize_t
 handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
-	struct mesghdr *hdr = MESG_HDR(buf);
-	uint8_t *text = MESG_TEXT(buf);
-	size_t size = MESG_TEXT_SIZE(nread);
+	struct packethdr *hdr = PACKET_HDR(buf);
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -379,8 +379,8 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t n
 	}
 
 fail:
-	result = ident_opkssub_ack_init(MESG_TEXT(buf), hdr->msn, failure);
-	mesg_lock(&peer->state, buf, result);
+	result = ident_opkssub_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
+	packet_lock(&peer->state, buf, result);
 
 	print_table(ctx->table);
 	/* print_nametable(ctx->namestable); */
@@ -392,9 +392,9 @@ static
 ssize_t
 handle_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
-	struct mesghdr *hdr = MESG_HDR(buf);
-	uint8_t *text = MESG_TEXT(buf);
-	size_t size = MESG_TEXT_SIZE(nread);
+	struct packethdr *hdr = PACKET_HDR(buf);
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
 	struct key k = {0};
 	uint8_t namelen;
@@ -419,8 +419,8 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	k = stbds_shget(ctx->namestable, msg->username);
 
 fail:
-	result = ident_lookup_rep_init(MESG_TEXT(buf), hdr->msn, k.data);
-	mesg_lock(&peer->state, buf, result);
+	result = ident_lookup_rep_init(PACKET_TEXT(buf), hdr->msn, k.data);
+	packet_lock(&peer->state, buf, result);
 
 	/* print_table(ctx->table); */
 	print_nametable(ctx->namestable);
@@ -431,9 +431,9 @@ static
 ssize_t
 handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
-	struct mesghdr *hdr = MESG_HDR(buf);
-	uint8_t *text = MESG_TEXT(buf);
-	size_t size = MESG_TEXT_SIZE(nread);
+	struct packethdr *hdr = PACKET_HDR(buf);
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -456,8 +456,8 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, s
 	value = &kv->value;
 	fprintf(stderr, "value = %p\n", (void *)value->username);
 fail:
-	result = ident_reverse_lookup_rep_init(MESG_TEXT(buf), hdr->msn, value->username);
-	mesg_lock(&peer->state, buf, result);
+	result = ident_reverse_lookup_rep_init(PACKET_TEXT(buf), hdr->msn, value->username);
+	packet_lock(&peer->state, buf, result);
 
 	/* print_table(ctx->table); */
 	print_nametable(ctx->namestable);
@@ -469,9 +469,9 @@ static
 ssize_t
 handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
-	struct mesghdr *hdr = MESG_HDR(buf);
-	uint8_t *text = MESG_TEXT(buf);
-	size_t size = MESG_TEXT_SIZE(nread);
+	struct packethdr *hdr = PACKET_HDR(buf);
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -500,8 +500,8 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	}
 
 fail:
-	result = ident_keyreq_rep_init(MESG_TEXT(buf), hdr->msn, value->spk, value->spk_sig, opk.data);
-	mesg_lock(&peer->state, buf, result);
+	result = ident_keyreq_rep_init(PACKET_TEXT(buf), hdr->msn, value->spk, value->spk_sig, opk.data);
+	packet_lock(&peer->state, buf, result);
 
 	print_table(ctx->table);
 	/* print_nametable(ctx->namestable); */
@@ -514,9 +514,9 @@ static
 ssize_t
 handle_fetch(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
-	struct mesghdr *hdr = MESG_HDR(buf);
-	uint8_t *text = MESG_TEXT(buf);
-	size_t size = MESG_TEXT_SIZE(nread);
+	struct packethdr *hdr = PACKET_HDR(buf);
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
 	/* struct msg_fetch_msg *msg = (struct msg_fetch_msg *)text; */
 	int msgcount = 0;
 	ptrdiff_t arrlen;
@@ -567,7 +567,7 @@ fail:
 		}
 	}
 
-	mesg_lock(&peer->state, buf, result);
+	packet_lock(&peer->state, buf, result);
 
 	return result;
 }
@@ -666,9 +666,9 @@ serve(int argc, char **argv)
 
 		/* This is either a HELLO message from a new peer or a message
 		 * from a peer that isn't new but has just changed addresses
-		 * that just happens to be exactly MESG_HELLO_SIZE bytes.
+		 * that just happens to be exactly PACKET_HELLO_SIZE bytes.
 		 */
-		if (peer->status == PEER_NEW && nread == MESG_HELLO_SIZE) {
+		if (peer->status == PEER_NEW && nread == PACKET_HELLO_SIZE) {
 			fprintf(stderr, "This appears to be a HELLO message from a new peer.\n");
 
 			/* TODO: Proof of work - to prevent denial of service:
@@ -696,17 +696,17 @@ serve(int argc, char **argv)
 
 			crypto_wipe(&peer->state, sizeof peer->state);
 
-			mesg_hshake_dprepare(&peer->state,
+			packet_hshake_dprepare(&peer->state,
 				isks, isks_prv, iks, iks_prv);
 
-			if (!mesg_hshake_dcheck(&peer->state, buf)) {
-				crypto_wipe(buf, MESG_HELLO_SIZE);
+			if (!packet_hshake_dcheck(&peer->state, buf)) {
+				crypto_wipe(buf, PACKET_HELLO_SIZE);
 
-				mesg_hshake_dreply(&peer->state, buf);
-				safe_sendto(fd, buf, MESG_REPLY_SIZE,
+				packet_hshake_dreply(&peer->state, buf);
+				safe_sendto(fd, buf, PACKET_REPLY_SIZE,
 					sstosa(&peer->addr),
 					peer->addr_len);
-				crypto_wipe(buf, MESG_REPLY_SIZE);
+				crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 				peer->status = PEER_ACTIVE;
 				fprintf(stderr, "Peer status: %d\n", peer->status);
@@ -722,16 +722,16 @@ serve(int argc, char **argv)
 
 		fprintf(stderr, "nread: %lu\n", nread);
 
-		if (nread > MESG_BUF_SIZE(0)) {
-			struct mesghdr *hdr = MESG_HDR(buf);
-			uint8_t *text = MESG_TEXT(buf);
-			size_t size = MESG_TEXT_SIZE(nread);
+		if (nread > PACKET_BUF_SIZE(0)) {
+			struct packethdr *hdr = PACKET_HDR(buf);
+			uint8_t *text = PACKET_TEXT(buf);
+			size_t size = PACKET_TEXT_SIZE(nread);
 
 			/* displaykey("buf", buf, nread); */
 
-			if (mesg_unlock(&peer->state, buf, nread)) {
+			if (packet_unlock(&peer->state, buf, nread)) {
 				fprintf(stderr, "Couldn't decrypt message with size=%lu (text_size=%lu)\n",
-					nread, MESG_TEXT_SIZE(nread));
+					nread, PACKET_TEXT_SIZE(nread));
 				continue;
 			}
 
@@ -775,21 +775,21 @@ serve(int argc, char **argv)
 						fprintf(stderr, "fail\n");
 						abort();
 					}
-					safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+					safe_sendto(fd, buf, PACKET_BUF_SIZE(size),
 						sstosa(&pi.addr), pi.addr_len);
-					crypto_wipe(buf, MESG_BUF_SIZE(size));
+					crypto_wipe(buf, PACKET_BUF_SIZE(size));
 					fprintf(stderr, "sent %lu-byte (%lu-byte) %s message\n",
-						size, MESG_BUF_SIZE(size), name);
+						size, PACKET_BUF_SIZE(size), name);
 					break;
 				case PROTO_MSG:
 					switch (msg->type) {
 					case MSG_FETCH_MSG:
 						size = handle_fetch(&ctx, peer, buf, nread);
-						safe_sendto(fd, buf, MESG_BUF_SIZE(size),
+						safe_sendto(fd, buf, PACKET_BUF_SIZE(size),
 							sstosa(&pi.addr), pi.addr_len);
-						crypto_wipe(buf, MESG_BUF_SIZE(size));
+						crypto_wipe(buf, PACKET_BUF_SIZE(size));
 						fprintf(stderr, "sent %lu-byte (%lu-byte) fetch reply message\n",
-							size, MESG_BUF_SIZE(size));
+							size, PACKET_BUF_SIZE(size));
 						break;
 					case MSG_FORWARD_MSG: {
 						struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
@@ -848,12 +848,12 @@ serve(int argc, char **argv)
 						if (kv->value.peer == NULL) {
 							stbds_arrpush(kv->value.letterbox, smsg);
 						} else {
-							struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)MESG_TEXT(buf);
+							struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)PACKET_TEXT(buf);
 							struct msg_fetch_content_msg *innermsg = (struct msg_fetch_content_msg *)msg->messages;
 							size_t repsize, totalmsglength;
 
 							totalmsglength = smsg.size + 34;
-							repsize = msg_fetch_rep_init(MESG_TEXT(buf), hdr->msn, 1, totalmsglength);
+							repsize = msg_fetch_rep_init(PACKET_TEXT(buf), hdr->msn, 1, totalmsglength);
 							msg->msg.type = MSG_IMMEDIATE;
 
 							store16_le(innermsg->len, smsg.size);
@@ -862,24 +862,24 @@ serve(int argc, char **argv)
 
 							free(smsg.data);
 
-							mesg_lock(&kv->value.peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
+							packet_lock(&kv->value.peer->state, buf, repsize);
+							safe_sendto(fd, buf, PACKET_BUF_SIZE(repsize),
 								sstosa(&kv->value.peer->addr), kv->value.peer->addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
+							crypto_wipe(buf, PACKET_BUF_SIZE(repsize));
 							fprintf(stderr, "sent %lu-byte (%lu-byte) immediate-forwarding message\n",
-								repsize, MESG_BUF_SIZE(repsize));
+								repsize, PACKET_BUF_SIZE(repsize));
 
 						}
 					forward_fail:
 
 						{
-							size_t repsize = msg_forward_ack_init(MESG_TEXT(buf), msn, result);
-							mesg_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, MESG_BUF_SIZE(repsize),
+							size_t repsize = msg_forward_ack_init(PACKET_TEXT(buf), msn, result);
+							packet_lock(&peer->state, buf, repsize);
+							safe_sendto(fd, buf, PACKET_BUF_SIZE(repsize),
 								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, MESG_BUF_SIZE(repsize));
+							crypto_wipe(buf, PACKET_BUF_SIZE(repsize));
 							fprintf(stderr, "sent %lu-byte (%lu-byte) message-forwarding ack\n",
-								repsize, MESG_BUF_SIZE(repsize));
+								repsize, PACKET_BUF_SIZE(repsize));
 						}
 
 						/* print_table(ctx.table); */

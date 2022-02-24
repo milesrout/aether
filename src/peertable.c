@@ -26,7 +26,7 @@
 #include <unistd.h>
 
 #include "util.h"
-#include "mesg.h"
+#include "packet.h"
 #include "peertable.h"
 #include "monocypher.h"
 

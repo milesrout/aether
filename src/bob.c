@@ -33,7 +33,7 @@
 
 #include "hkdf.h"
 #include "util.h"
-#include "mesg.h"
+#include "packet.h"
 #include "peertable.h"
 #include "proof.h"
 #include "msg.h"
@@ -48,26 +48,26 @@
 static
 uint8_t zero_key[32] = {0};
 
-int handle_ident_replies(int fd, uint8_t buf[65536], struct mesg_state *state, int minreplies);
+int handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int minreplies);
 
 int
-handle_ident_replies(int fd, uint8_t buf[65536], struct mesg_state *state, int minreplies)
+handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int minreplies)
 {
 	size_t nread;
 
 	while ((nread = (minreplies ? safe_read(fd, buf, 65536) : safe_read_nonblock(fd, buf, 65536)))) {
-		uint8_t *text = MESG_TEXT(buf);
-		size_t size = MESG_TEXT_SIZE(nread);
+		uint8_t *text = PACKET_TEXT(buf);
+		size_t size = PACKET_TEXT_SIZE(nread);
 
 		if (nread == 0)
 			continue;
 
-		if (nread < MESG_BUF_SIZE(0)) {
+		if (nread < PACKET_BUF_SIZE(0)) {
 			fprintf(stderr, "Received a message that is too small.\n");
 			goto fail;
 		}
 
-		if (mesg_unlock(state, buf, nread)) {
+		if (packet_unlock(state, buf, nread)) {
 			fprintf(stderr, "Message cannot be decrypted.\n");
 			goto fail;
 		}
@@ -143,34 +143,34 @@ fail:
 
 static
 int
-get_username(const char **username_storage, struct mesg_state *state, int fd, uint8_t isk[32])
+get_username(const char **username_storage, struct packet_state *state, int fd, uint8_t isk[32])
 {
 	size_t size, nread;
 	int result = -1;
 	char *username = NULL;
 	uint8_t buf[65536] = {0};
 
-	size = ident_reverse_lookup_msg_init(MESG_TEXT(buf), isk);
-	mesg_lock(state, buf, size);
-	safe_write(fd, buf, MESG_BUF_SIZE(size));
-	crypto_wipe(buf, MESG_BUF_SIZE(size));
+	size = ident_reverse_lookup_msg_init(PACKET_TEXT(buf), isk);
+	packet_lock(state, buf, size);
+	safe_write(fd, buf, PACKET_BUF_SIZE(size));
+	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
 	nread = safe_read(fd, buf, 65536);
-	if (nread < MESG_BUF_SIZE(0)) {
+	if (nread < PACKET_BUF_SIZE(0)) {
 		fprintf(stderr, "Received a message that is too small.\n");
 		goto fail;
 	}
 
-	if (mesg_unlock(state, buf, nread)) {
+	if (packet_unlock(state, buf, nread)) {
 		fprintf(stderr, "Message cannot be decrypted.\n");
 		goto fail;
 	}
 
 	{
-		struct ident_reverse_lookup_reply_msg *msg = (struct ident_reverse_lookup_reply_msg *)MESG_TEXT(buf);
-		if (MESG_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_BASE_SIZE) {
+		struct ident_reverse_lookup_reply_msg *msg = (struct ident_reverse_lookup_reply_msg *)PACKET_TEXT(buf);
+		if (PACKET_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_BASE_SIZE) {
 			fprintf(stderr, "Identity reverse lookup reply message (%lu) is too small (%lu).\n",
-				MESG_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_BASE_SIZE);
+				PACKET_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_BASE_SIZE);
 			goto fail;
 		}
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_REVERSE_LOOKUP_REP) {
@@ -178,9 +178,9 @@ get_username(const char **username_storage, struct mesg_state *state, int fd, ui
 				msg->msg.proto, msg->msg.type);
 			goto fail;
 		}
-		if (MESG_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len)) {
+		if (PACKET_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len)) {
 			fprintf(stderr, "Identity reverse lookup reply message (%lu) is too small (%lu).\n",
-				MESG_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len));
+				PACKET_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len));
 			goto fail;
 		}
 
@@ -207,7 +207,7 @@ bob(int argc, char **argv)
 {
 	int fd;
 	const char *host, *port;
-	struct mesg_state state = {0};
+	struct packet_state state = {0};
 	struct ident_state ident = {0};
 	struct p2pstate *p2ptable = NULL;
 	uint8_t buf[65536] = {0};
@@ -227,21 +227,21 @@ bob(int argc, char **argv)
 	if (fd == -1)
 		exit(EXIT_FAILURE);
 
-	mesg_hshake_cprepare(&state, isks, iks, ident.isk, ident.isk_prv, ident.ik, ident.ik_prv);
-	mesg_hshake_chello(&state, buf);
-	safe_write(fd, buf, MESG_HELLO_SIZE);
-	crypto_wipe(buf, MESG_HELLO_SIZE);
+	packet_hshake_cprepare(&state, isks, iks, ident.isk, ident.isk_prv, ident.ik, ident.ik_prv);
+	packet_hshake_chello(&state, buf);
+	safe_write(fd, buf, PACKET_HELLO_SIZE);
+	crypto_wipe(buf, PACKET_HELLO_SIZE);
 
-	nread = safe_read(fd, buf, MESG_REPLY_SIZE + 1);
-	if (nread != MESG_REPLY_SIZE) {
+	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
+	if (nread != PACKET_REPLY_SIZE) {
 		fprintf(stderr, "Received invalid REPLY from server.\n");
 		goto fail;
 	}
-	if (mesg_hshake_cfinish(&state, buf)) {
+	if (packet_hshake_cfinish(&state, buf)) {
 		fprintf(stderr, "REPLY message cannot be decrypted.\n");
 		goto fail;
 	}
-	crypto_wipe(buf, MESG_REPLY_SIZE);
+	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	if (register_identity(&state, &ident, fd, buf, "bob")) {
 		fprintf(stderr, "Cannot register username bob\n");
@@ -258,7 +258,7 @@ fail:
 
 static
 void
-handle_input(struct mesg_state *state, struct p2pstate *p2pstate,
+handle_input(struct packet_state *state, struct p2pstate *p2pstate,
 		int fd, uint8_t *buf)
 {
 	uint8_t text[258] = {0};
@@ -275,20 +275,20 @@ handle_input(struct mesg_state *state, struct p2pstate *p2pstate,
 	text_size = strlen((char*)(text)) + 1;
 
 	size = send_message(state, &p2pstate->state, p2pstate->key.data, buf, text, text_size);
-	safe_write(fd, buf, MESG_BUF_SIZE(size));
-	crypto_wipe(buf, MESG_BUF_SIZE(size));
+	safe_write(fd, buf, PACKET_BUF_SIZE(size));
+	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 }
 
 static
 int
-try_unlock_raw_message(struct mesg_state *p2pstate,
+try_unlock_raw_message(struct packet_state *p2pstate,
 		struct msg_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
 
-	if (!mesg_unlock(p2pstate, content->text, load16_le(content->len))) {
-		*text = (const char *)(2 + MESG_TEXT(content->text));
-		*text_size = load16_le(MESG_TEXT(content->text));
+	if (!packet_unlock(p2pstate, content->text, load16_le(content->len))) {
+		*text = (const char *)(2 + PACKET_TEXT(content->text));
+		*text_size = load16_le(PACKET_TEXT(content->text));
 		return 0;
 	}
 
@@ -299,15 +299,15 @@ try_unlock_raw_message(struct mesg_state *p2pstate,
 
 static
 int
-try_unlock_prefixed_message(struct mesg_state *p2pstate,
+try_unlock_prefixed_message(struct packet_state *p2pstate,
 		struct msg_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
-	if (!mesg_unlock(p2pstate,
-			content->text + MESG_P2PHELLO_SIZE(0),
-			load16_le(content->len) - MESG_P2PHELLO_SIZE(0))) {
-		*text = (const char *)(2 + MESG_TEXT(content->text + MESG_P2PHELLO_SIZE(0)));
-		*text_size = load16_le(MESG_TEXT(content->text + MESG_P2PHELLO_SIZE(0)));
+	if (!packet_unlock(p2pstate,
+			content->text + PACKET_P2PHELLO_SIZE(0),
+			load16_le(content->len) - PACKET_P2PHELLO_SIZE(0))) {
+		*text = (const char *)(2 + PACKET_TEXT(content->text + PACKET_P2PHELLO_SIZE(0)));
+		*text_size = load16_le(PACKET_TEXT(content->text + PACKET_P2PHELLO_SIZE(0)));
 		return 0;
 	}
 
@@ -318,7 +318,7 @@ try_unlock_prefixed_message(struct mesg_state *p2pstate,
 
 static
 int
-try_unlock_hshake_message(struct ident_state *ident, struct mesg_state *p2pstate,
+try_unlock_hshake_message(struct ident_state *ident, struct packet_state *p2pstate,
 		struct msg_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
@@ -365,7 +365,7 @@ try_unlock_hshake_message(struct ident_state *ident, struct mesg_state *p2pstate
 		memcpy(opk_prv, popk->prv,      32);
 	}
 
-	mesg_hshake_bprepare(p2pstate,
+	packet_hshake_bprepare(p2pstate,
 		ika, hmsg->eka,
 		ident->ik, ident->ik_prv,
 		spk->key.data, spk->prv,
@@ -375,8 +375,8 @@ try_unlock_hshake_message(struct ident_state *ident, struct mesg_state *p2pstate
 	crypto_wipe(opk,     32);
 	crypto_wipe(opk_prv, 32);
 
-	innermsgsize = padme_enc(innermsgsize + MESG_P2PHELLO_SIZE(0)) - MESG_P2PHELLO_SIZE(0);
-	if (mesg_hshake_bfinish(p2pstate, hmsg->message, innermsgsize)) {
+	innermsgsize = padme_enc(innermsgsize + PACKET_P2PHELLO_SIZE(0)) - PACKET_P2PHELLO_SIZE(0);
+	if (packet_hshake_bfinish(p2pstate, hmsg->message, innermsgsize)) {
 		fprintf(stderr, "Failed to decrypt of inner length %lu.\n", innermsgsize);
 		goto fail;
 	}
@@ -384,8 +384,8 @@ try_unlock_hshake_message(struct ident_state *ident, struct mesg_state *p2pstate
 	assert(stbds_hmdel(ident->opks, key));
 	crypto_wipe(&key, sizeof key);
 
-	*text = (const char *)(2 + MESG_TEXT(hmsg->message));
-	*text_size = load16_le(MESG_TEXT(hmsg->message));
+	*text = (const char *)(2 + PACKET_TEXT(hmsg->message));
+	*text_size = load16_le(PACKET_TEXT(hmsg->message));
 	return 0;
 
 fail:
@@ -401,10 +401,10 @@ fail:
 
 static
 int
-handle_message(struct ident_state *ident, struct mesg_state *state,
+handle_message(struct ident_state *ident, struct packet_state *state,
 		struct p2pstate **p2ptable, int fd, uint8_t *buf)
 {
-	struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)MESG_TEXT(buf);
+	struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)PACKET_TEXT(buf);
 	size_t len = load16_le(msg->msg.len);
 	size_t total_size = MSG_FETCH_REP_BASE_SIZE;
 	uint8_t *message = msg->messages;
@@ -495,25 +495,25 @@ fail:
 
 static
 void
-handle_packet(struct ident_state *ident, struct mesg_state *state, struct p2pstate **p2ptable, int fd, uint8_t *buf)
+handle_packet(struct ident_state *ident, struct packet_state *state, struct p2pstate **p2ptable, int fd, uint8_t *buf)
 {
 	size_t nread;
 
 	while ((nread = safe_read_nonblock(fd, buf, 65536))) {
-		struct msg *msg = (struct msg *)MESG_TEXT(buf);
-		if (nread < MESG_BUF_SIZE(sizeof(struct msg))) {
+		struct msg *msg = (struct msg *)PACKET_TEXT(buf);
+		if (nread < PACKET_BUF_SIZE(sizeof(struct msg))) {
 			fprintf(stderr, "handle_packet: Received a packet that is too small to be valid.\n");
 			goto loop_continue;
 		}
 
-		if (mesg_unlock(state, buf, nread)) {
+		if (packet_unlock(state, buf, nread)) {
 			fprintf(stderr, "handle_packet: Message cannot be decrypted.\n");
 			goto loop_continue;
 		}
 
-		if (MESG_TEXT_SIZE(nread) < load16_le(msg->len)) {
+		if (PACKET_TEXT_SIZE(nread) < load16_le(msg->len)) {
 			fprintf(stderr, "handle_packet: Received an improperly formed packet (invalid length (%lu < %lu)).\n",
-				MESG_TEXT_SIZE(nread), load16_le(msg->len));
+				PACKET_TEXT_SIZE(nread), load16_le(msg->len));
 			goto loop_continue;
 		}
 
@@ -553,7 +553,7 @@ handle_packet(struct ident_state *ident, struct mesg_state *state, struct p2psta
 }
 
 void
-interactive(struct ident_state *ident, struct mesg_state *state, struct p2pstate **p2ptable, int fd, uint8_t buf[65536])
+interactive(struct ident_state *ident, struct packet_state *state, struct p2pstate **p2ptable, int fd, uint8_t buf[65536])
 {
 	struct pollfd pfds[] = {{0, POLLIN, 0}, {fd, POLLIN, 0}};
 
@@ -561,9 +561,9 @@ interactive(struct ident_state *ident, struct mesg_state *state, struct p2pstate
 		int pcount = poll(pfds, 2, 5000);
 		if (pcount == 0) {
 			size_t size = msg_fetch_init(buf);
-			mesg_lock(state, buf, size);
-			safe_write(fd, buf, MESG_BUF_SIZE(size));
-			crypto_wipe(buf, MESG_BUF_SIZE(size));
+			packet_lock(state, buf, size);
+			safe_write(fd, buf, PACKET_BUF_SIZE(size));
+			crypto_wipe(buf, PACKET_BUF_SIZE(size));
 			continue;
 		}
 		if (pfds[0].revents & POLLIN)
@@ -574,7 +574,7 @@ interactive(struct ident_state *ident, struct mesg_state *state, struct p2pstate
 }
 
 int
-register_identity(struct mesg_state *state, struct ident_state *ident,
+register_identity(struct packet_state *state, struct ident_state *ident,
 		int fd, uint8_t buf[65536], const char *name)
 {
 	size_t size;
@@ -585,17 +585,17 @@ register_identity(struct mesg_state *state, struct ident_state *ident,
 	while (regn_state < 3) {
 		fprintf(stderr, "regn_state: %u\n", regn_state);
 		if (regn_state == 0)
-			size = ident_register_msg_init(ident, MESG_TEXT(buf), name);
+			size = ident_register_msg_init(ident, PACKET_TEXT(buf), name);
 		else if (regn_state == 1)
-			size = ident_spksub_msg_init(ident, MESG_TEXT(buf));
+			size = ident_spksub_msg_init(ident, PACKET_TEXT(buf));
 		else
-			size = ident_opkssub_msg_init(ident, MESG_TEXT(buf));
+			size = ident_opkssub_msg_init(ident, PACKET_TEXT(buf));
 
-		mesg_lock(state, buf, size);
-		safe_write(fd, buf, MESG_BUF_SIZE(size));
-		crypto_wipe(buf, MESG_BUF_SIZE(size));
+		packet_lock(state, buf, size);
+		safe_write(fd, buf, PACKET_BUF_SIZE(size));
+		crypto_wipe(buf, PACKET_BUF_SIZE(size));
 		fprintf(stderr, "sent %lu-byte (%lu-byte) message\n",
-			size, MESG_BUF_SIZE(size));
+			size, PACKET_BUF_SIZE(size));
 
 		pcount = poll(pfds, 1, 1000);
 

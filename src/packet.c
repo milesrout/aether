@@ -25,7 +25,7 @@
 #include "msg.h"
 #include "ident.h"
 #include "messaging.h"
-#include "mesg.h"
+#include "packet.h"
 #include "hkdf.h"
 #include "monocypher.h"
 
@@ -35,9 +35,9 @@
 
 /* prepares the message by advancing the state machine, preparing the header,
  * encryping the message in place and then encrypting the header in place.
- * the resulting struct mesg is ready to be sent over the wire.
+ * the resulting struct packet is ready to be sent over the wire.
  *
- * mesg must point to the message to be prepared. if anything is to be done to
+ * packet must point to the message to be prepared. if anything is to be done to
  * the message before it is sent (e.g. padding) it should be done before
  * calling this function.
  *
@@ -76,25 +76,25 @@ static const uint8_t dh_info[]   = "AetherwindDiffieHellmanRatchet";
 static const uint8_t zero_nonce[24];
 static const uint8_t zero_key[32];
 
-static struct mesgkey_bucket *spare_buckets = NULL;
-static struct mesgkey *spare_mesgkeys = NULL;
+static struct packetkey_bucket *spare_buckets = NULL;
+static struct packetkey *spare_packetkeys = NULL;
 
-struct mesgkey {
+struct packetkey {
 	uint32_t msn;
 	uint8_t mk[32];
-	struct mesgkey *next;
+	struct packetkey *next;
 };
 
-struct mesgkey_bucket {
+struct packetkey_bucket {
 	uint8_t hk[32];
-	struct mesgkey *first;
-	struct mesgkey_bucket *next;
+	struct packetkey *first;
+	struct packetkey_bucket *next;
 };
 
 size_t
 padme_enc(size_t l)
 {
-	return MESG_TEXT_SIZE(padme(MESG_BUF_SIZE(l)));
+	return PACKET_TEXT_SIZE(padme(PACKET_BUF_SIZE(l)));
 }
 
 static void offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32], uint8_t *dh, size_t dh_size);
@@ -138,7 +138,7 @@ dh_ratchet(uint8_t rk[32], uint8_t ck[32], uint8_t nhk[32], uint8_t dh[32])
 }
 
 /* attempt to decrypt the header of an encrypted message
- * mesg should be a struct mesg that has NOT had its header decrypted
+ * packet should be a struct packet that has NOT had its header decrypted
  * hdrmac: valid
  * nonce:  valid
  * mac:    HENCRYPT'd
@@ -153,8 +153,8 @@ dh_ratchet(uint8_t rk[32], uint8_t ck[32], uint8_t nhk[32], uint8_t dh[32])
  */
 static
 int
-try_decrypt_header(const struct mesg_ratchet_state_common *ra,
-		uint8_t hk[32], struct mesghdr *hdr)
+try_decrypt_header(const struct packet_ratchet_state_common *ra,
+		uint8_t hk[32], struct packethdr *hdr)
 {
 	int result;
 
@@ -166,7 +166,7 @@ try_decrypt_header(const struct mesg_ratchet_state_common *ra,
 		ra->ad,
 		AD_SIZE,
 		hdr->msn,
-		sizeof(struct mesghdr) - offsetof(struct mesghdr, msn));
+		sizeof(struct packethdr) - offsetof(struct packethdr, msn));
 
 	/* if (!result) { */
 	/* 	crypto_wipe(hdr->hdrmac, 16); */
@@ -177,7 +177,7 @@ try_decrypt_header(const struct mesg_ratchet_state_common *ra,
 }
 
 /* decrypt a partially decrypted message
- * mesg should be a struct mesg that has had its header decrypted
+ * packet should be a struct packet that has had its header decrypted
  * hdrmac: should have been wiped already
  * nonce:  should have been wiped already
  * mac:    valid
@@ -191,20 +191,20 @@ try_decrypt_header(const struct mesg_ratchet_state_common *ra,
  */
 static
 int
-decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size,
+decrypt_message(uint8_t mk[32], struct packet *packet, size_t packet_size,
 		const uint8_t *aad, size_t aad_size)
 {
 	int result;
 
 	result = crypto_unlock_aead(
-		mesg->text,
+		packet->text,
 		mk,
 		zero_nonce,
-		mesg->hdr.mac,
+		packet->hdr.mac,
 		aad,
 		aad_size,
-		mesg->text,
-		mesg_size);
+		packet->text,
+		packet_size);
 
 	if (!result) {
 		crypto_wipe(mk, 32);
@@ -216,13 +216,13 @@ decrypt_message(uint8_t mk[32], struct mesg *mesg, size_t mesg_size,
 #if 0
 static
 size_t
-bucket_length(struct mesgkey_bucket *bucket)
+bucket_length(struct packetkey_bucket *bucket)
 {
 	size_t n = 0;
-	struct mesgkey *mesgkey = bucket->first;
-	while (mesgkey) {
+	struct packetkey *packetkey = bucket->first;
+	while (packetkey) {
 		n++;
-		mesgkey = mesgkey->next;
+		packetkey = packetkey->next;
 	}
 	return n;
 }
@@ -230,50 +230,50 @@ bucket_length(struct mesgkey_bucket *bucket)
 
 static
 int
-try_skipped_message_keys(struct mesg_ratchet_state_common *ra,
-	struct mesg *mesg, size_t mesg_size,
+try_skipped_message_keys(struct packet_ratchet_state_common *ra,
+	struct packet *packet, size_t packet_size,
 	const uint8_t *aad, size_t aad_size)
 {
-	struct mesgkey_bucket *prev_bucket, *bucket;
-	struct mesgkey *prev_mesgkey, *mesgkey;
+	struct packetkey_bucket *prev_bucket, *bucket;
+	struct packetkey *prev_packetkey, *packetkey;
 
 	prev_bucket = NULL;
 	bucket = ra->skipped;
 
 	while (bucket != NULL) {
 
-		if (try_decrypt_header(ra, bucket->hk, &mesg->hdr)) {
+		if (try_decrypt_header(ra, bucket->hk, &packet->hdr)) {
 			goto outer_continue;
 		}
 
-		prev_mesgkey = NULL;
-		mesgkey = bucket->first;
+		prev_packetkey = NULL;
+		packetkey = bucket->first;
 
-		while (mesgkey != NULL) {
+		while (packetkey != NULL) {
 
-			if (mesgkey->msn != load32_le(mesg->hdr.msn)) {
+			if (packetkey->msn != load32_le(packet->hdr.msn)) {
 				goto inner_continue;
 			}
 
 			/* header decrypted and the correct msn */
 
 			/* attempt to decrypt the message */
-			if (decrypt_message(mesgkey->mk, mesg, mesg_size, aad, aad_size))
+			if (decrypt_message(packetkey->mk, packet, packet_size, aad, aad_size))
 				return -1;
 
-			/* if successful, remove the struct mesgkey from the
+			/* if successful, remove the struct packetkey from the
 			 * bucket and remove the bucket from the bucket list if
 			 * it is now empty.
 			 */
 			
-			if (prev_mesgkey != NULL) {
-				prev_mesgkey->next = mesgkey->next;
-				goto detach_mesgkey;
+			if (prev_packetkey != NULL) {
+				prev_packetkey->next = packetkey->next;
+				goto detach_packetkey;
 			}
 
-			if (mesgkey->next != NULL) {
-				bucket->first = mesgkey->next;
-				goto detach_mesgkey;
+			if (packetkey->next != NULL) {
+				bucket->first = packetkey->next;
+				goto detach_packetkey;
 			}
 
 			if (prev_bucket != NULL) {
@@ -287,18 +287,18 @@ try_skipped_message_keys(struct mesg_ratchet_state_common *ra,
 			}
 
 		detach_bucket:
-			crypto_wipe(bucket, sizeof(struct mesgkey_bucket));
+			crypto_wipe(bucket, sizeof(struct packetkey_bucket));
 			bucket->next = ra->spare_buckets;
 			ra->spare_buckets = bucket;
-		detach_mesgkey:
-			crypto_wipe(mesgkey, sizeof(struct mesgkey));
-			mesgkey->next = ra->spare_mesgkeys;
-			ra->spare_mesgkeys = mesgkey;
+		detach_packetkey:
+			crypto_wipe(packetkey, sizeof(struct packetkey));
+			packetkey->next = ra->spare_packetkeys;
+			ra->spare_packetkeys = packetkey;
 			return 0;
 
 		inner_continue:
-			prev_mesgkey = mesgkey;
-			mesgkey = mesgkey->next;
+			prev_packetkey = packetkey;
+			packetkey = packetkey->next;
 		}
 	outer_continue:
 		prev_bucket = bucket;
@@ -309,10 +309,10 @@ try_skipped_message_keys(struct mesg_ratchet_state_common *ra,
 }
 
 static
-struct mesgkey_bucket *
-bucket_create(struct mesg_ratchet_state_common *ra)
+struct packetkey_bucket *
+bucket_create(struct packet_ratchet_state_common *ra)
 {
-	struct mesgkey_bucket *b;
+	struct packetkey_bucket *b;
 
 	if (NULL != (b = ra->spare_buckets)) {
 		ra->spare_buckets = b->next;
@@ -328,18 +328,18 @@ bucket_create(struct mesg_ratchet_state_common *ra)
 }
 
 static
-struct mesgkey *
-mesgkey_create(struct mesg_ratchet_state_common *ra)
+struct packetkey *
+packetkey_create(struct packet_ratchet_state_common *ra)
 {
-	struct mesgkey *m;
+	struct packetkey *m;
 
-	if (NULL != (m = ra->spare_mesgkeys)) {
-		ra->spare_mesgkeys = m->next;
+	if (NULL != (m = ra->spare_packetkeys)) {
+		ra->spare_packetkeys = m->next;
 		return m;
 	}
 
-	if (NULL != (m = spare_mesgkeys)) {
-		spare_mesgkeys = m->next;
+	if (NULL != (m = spare_packetkeys)) {
+		spare_packetkeys = m->next;
 		return m;
 	}
 
@@ -348,10 +348,10 @@ mesgkey_create(struct mesg_ratchet_state_common *ra)
 
 static
 int
-skip_message_keys_helper(struct mesg_ratchet_state_common *ra, uint32_t until)
+skip_message_keys_helper(struct packet_ratchet_state_common *ra, uint32_t until)
 {
-	struct mesgkey *prev_mesgkey = NULL;
-	struct mesgkey_bucket *bucket;
+	struct packetkey *prev_packetkey = NULL;
+	struct packetkey_bucket *bucket;
 
 	bucket = bucket_create(ra);
 	if (bucket == NULL)
@@ -362,20 +362,20 @@ skip_message_keys_helper(struct mesg_ratchet_state_common *ra, uint32_t until)
 	ra->skipped = bucket;
 
 	while (ra->nr < until) {
-		struct mesgkey *mesgkey = mesgkey_create(ra);
+		struct packetkey *packetkey = packetkey_create(ra);
 
-		if (mesgkey == NULL)
+		if (packetkey == NULL)
 			return -1;
 
-		if (prev_mesgkey == NULL)
-			bucket->first = mesgkey;
+		if (prev_packetkey == NULL)
+			bucket->first = packetkey;
 		else
-			prev_mesgkey->next = mesgkey;
-		prev_mesgkey = mesgkey;
+			prev_packetkey->next = packetkey;
+		prev_packetkey = packetkey;
 
-		mesgkey->msn = ra->nr;
-		symm_ratchet(mesgkey->mk, ra->ckr);
-		mesgkey->next = NULL;
+		packetkey->msn = ra->nr;
+		symm_ratchet(packetkey->mk, ra->ckr);
+		packetkey->next = NULL;
 
 		ra->nr++;
 	}
@@ -385,7 +385,7 @@ skip_message_keys_helper(struct mesg_ratchet_state_common *ra, uint32_t until)
 
 static
 int
-skip_message_keys(struct mesg_ratchet_state_common *ra, uint32_t until)
+skip_message_keys(struct packet_ratchet_state_common *ra, uint32_t until)
 {
 	if (MAX_SKIP == 0)
 		return -1;
@@ -401,7 +401,7 @@ skip_message_keys(struct mesg_ratchet_state_common *ra, uint32_t until)
 
 static
 void
-step_receiver_ratchet(struct mesg_ratchet_state_common *ra, struct mesghdr *hdr)
+step_receiver_ratchet(struct packet_ratchet_state_common *ra, struct packethdr *hdr)
 {
 	uint8_t dh[32];
 
@@ -426,7 +426,7 @@ step_receiver_ratchet(struct mesg_ratchet_state_common *ra, struct mesghdr *hdr)
 
 static
 int
-try_decrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
+try_decrypt_message(struct packet_ratchet_state_common *ra, struct packet *packet, size_t packet_size)
 {
 	uint8_t mk[32];
 	uint8_t aad[AAD_SIZE];
@@ -434,27 +434,27 @@ try_decrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, siz
 
 	/* AAD = (AD||ENC_HEADER) */
 	memcpy(aad,           ra->ad,        AD_SIZE);
-	memcpy(aad + AD_SIZE, mesg->hdr.msn, AAD_SIZE - AD_SIZE);
+	memcpy(aad + AD_SIZE, packet->hdr.msn, AAD_SIZE - AD_SIZE);
 
-	if (!try_skipped_message_keys(ra, mesg, mesg_size, aad, AAD_SIZE)) {
+	if (!try_skipped_message_keys(ra, packet, packet_size, aad, AAD_SIZE)) {
 		crypto_wipe(aad, AAD_SIZE);
 		return 0;
 	}
 
-	if (try_decrypt_header(ra, ra->hkr, &mesg->hdr)) {
-		if (try_decrypt_header(ra, ra->nhkr, &mesg->hdr))
+	if (try_decrypt_header(ra, ra->hkr, &packet->hdr)) {
+		if (try_decrypt_header(ra, ra->nhkr, &packet->hdr))
 			goto fail;
-		if (skip_message_keys(ra, load32_le(mesg->hdr.pn)))
+		if (skip_message_keys(ra, load32_le(packet->hdr.pn)))
 			goto fail;
-		step_receiver_ratchet(ra, &mesg->hdr);
+		step_receiver_ratchet(ra, &packet->hdr);
 	}
-	if (skip_message_keys(ra, load32_le(mesg->hdr.msn)))
+	if (skip_message_keys(ra, load32_le(packet->hdr.msn)))
 		goto fail;
 
 	symm_ratchet(mk, ra->ckr);
 	ra->nr++;
 
-	result = decrypt_message(mk, mesg, mesg_size, aad, AAD_SIZE);
+	result = decrypt_message(mk, packet, packet_size, aad, AAD_SIZE);
 	if (!result)
 		ra->prerecv = 0;
 fail:
@@ -465,35 +465,35 @@ fail:
 
 static
 void
-encrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t mesg_size)
+encrypt_message(struct packet_ratchet_state_common *ra, struct packet *packet, size_t packet_size)
 {
 	uint8_t mk[32];
 	uint8_t aad[AAD_SIZE];
 
 	symm_ratchet(mk, ra->cks);
 
-	store32_le(mesg->hdr.msn, ra->ns);
-	store32_le(mesg->hdr.pn, ra->pn);
-	memcpy(mesg->hdr.pk, ra->dhks, 32);
+	store32_le(packet->hdr.msn, ra->ns);
+	store32_le(packet->hdr.pn, ra->pn);
+	memcpy(packet->hdr.pk, ra->dhks, 32);
 
-	randbytes(mesg->hdr.nonce, 24);
+	randbytes(packet->hdr.nonce, 24);
 
 	crypto_lock_aead(
-		mesg->hdr.hdrmac,
-		mesg->hdr.msn,
+		packet->hdr.hdrmac,
+		packet->hdr.msn,
 		ra->hks,
-		mesg->hdr.nonce,
+		packet->hdr.nonce,
 		ra->ad,
 		AD_SIZE,
-		mesg->hdr.msn,
-		sizeof(struct mesghdr) - offsetof(struct mesghdr, msn));
+		packet->hdr.msn,
+		sizeof(struct packethdr) - offsetof(struct packethdr, msn));
 
 	memcpy(aad,           ra->ad,        AD_SIZE);
-	memcpy(aad + AD_SIZE, mesg->hdr.msn, AAD_SIZE - AD_SIZE);
+	memcpy(aad + AD_SIZE, packet->hdr.msn, AAD_SIZE - AD_SIZE);
 
 	crypto_lock_aead(
-		mesg->hdr.mac,
-		mesg->text,
+		packet->hdr.mac,
+		packet->text,
 		mk,
 		zero_nonce, /* (each message is sent using a one-use secret key,
 		                so AEAD can use a constant nonce)
@@ -501,8 +501,8 @@ encrypt_message(struct mesg_ratchet_state_common *ra, struct mesg *mesg, size_t 
 				provide domain separation?)*/
 		aad,
 		AAD_SIZE,
-		mesg->text,
-		mesg_size);
+		packet->text,
+		packet_size);
 
 	crypto_wipe(mk, 32);
 	crypto_wipe(aad, AAD_SIZE);
@@ -532,28 +532,28 @@ hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 }
 
 void
-mesg_lock(struct mesg_state *state, uint8_t *buf, size_t text_size)
+packet_lock(struct packet_state *state, uint8_t *buf, size_t text_size)
 {
 	/* fprintf(stderr, "\nEncrypting message with size %lu (%lu)\n", */
-	/* 	text_size, MESG_BUF_SIZE(text_size)); */
-	encrypt_message(&state->u.ra.rac, (struct mesg *)buf, text_size);
+	/* 	text_size, PACKET_BUF_SIZE(text_size)); */
+	encrypt_message(&state->u.ra.rac, (struct packet *)buf, text_size);
 }
 
 int
-mesg_unlock(struct mesg_state *state, uint8_t *buf, size_t buf_size)
+packet_unlock(struct packet_state *state, uint8_t *buf, size_t buf_size)
 {
 	/* fprintf(stderr, "\nTrying to decrypt message with size %lu (%lu)\n", */
-	/* 	MESG_TEXT_SIZE(buf_size), buf_size); */
+	/* 	PACKET_TEXT_SIZE(buf_size), buf_size); */
 	return try_decrypt_message(&state->u.ra.rac,
-		(struct mesg *)buf, buf_size - sizeof(struct mesg));
+		(struct packet *)buf, buf_size - sizeof(struct packet));
 }
 
 void
-mesg_hshake_dprepare(struct mesg_state *state,
+packet_hshake_dprepare(struct packet_state *state,
 		const uint8_t iskd[32], const uint8_t iskd_prv[32],
 		const uint8_t ikd[32], const uint8_t ikd_prv[32])
 {
-	struct mesg_hshake_dstate *hsd = &state->u.hsd;
+	struct packet_hshake_dstate *hsd = &state->u.hsd;
 
 	crypto_wipe(state, sizeof *state);
 
@@ -566,12 +566,12 @@ mesg_hshake_dprepare(struct mesg_state *state,
 }
 
 void
-mesg_hshake_cprepare(struct mesg_state *state,
+packet_hshake_cprepare(struct packet_state *state,
 		const uint8_t iskd[32], const uint8_t ikd[32],
 		const uint8_t iskc[32], const uint8_t iskc_prv[32],
 		const uint8_t ikc[32], const uint8_t ikc_prv[32])
 {
-	struct mesg_hshake_cstate *hsc = &state->u.hsc;
+	struct packet_hshake_cstate *hsc = &state->u.hsc;
 
 	crypto_wipe(state, sizeof *state);
 
@@ -604,9 +604,9 @@ hello_compute_shared_secrets(uint8_t hk[32], uint8_t rk[32],
 }
 
 void
-mesg_hshake_chello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
+packet_hshake_chello(struct packet_state *state, uint8_t buf[PACKET_HELLO_SIZE])
 {
-	struct mesg_hshake_cstate *hsc = &state->u.hsc;
+	struct packet_hshake_cstate *hsc = &state->u.hsc;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
 	uint8_t hellokey[32];
 
@@ -631,7 +631,7 @@ mesg_hshake_chello(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
 
 static
 int
-try_decrypt_hello(struct mesg_hshake_dstate *hsd, struct hshake_hello_msg *hellomsg)
+try_decrypt_hello(struct packet_hshake_dstate *hsd, struct hshake_hello_msg *hellomsg)
 {
 	uint8_t hellokey[32];
 	int result;
@@ -644,7 +644,7 @@ try_decrypt_hello(struct mesg_hshake_dstate *hsd, struct hshake_hello_msg *hello
 		zero_nonce,
 		hellomsg->mac,
 		hellomsg->iskc,
-		MESG_HELLO_SIZE - offsetof(struct hshake_hello_msg, iskc));
+		PACKET_HELLO_SIZE - offsetof(struct hshake_hello_msg, iskc));
 
 	crypto_wipe(hellokey, 32);
 
@@ -652,13 +652,13 @@ try_decrypt_hello(struct mesg_hshake_dstate *hsd, struct hshake_hello_msg *hello
 }
 
 void
-mesg_hshake_bprepare(struct mesg_state *state,
+packet_hshake_bprepare(struct packet_state *state,
 	const uint8_t ika[32], const uint8_t eka[32],
 	const uint8_t ikb[32],  const uint8_t ikb_prv[32],
 	const uint8_t spkb[32], const uint8_t spkb_prv[32],
 	const uint8_t opkb[32], const uint8_t opkb_prv[32])
 {
-	struct mesg_ratchet_state_common *ra = &state->u.ra.rac;
+	struct packet_ratchet_state_common *ra = &state->u.ra.rac;
 	uint8_t dh[128];
 
 	crypto_wipe(state, sizeof *state);
@@ -687,15 +687,15 @@ mesg_hshake_bprepare(struct mesg_state *state,
 }
 
 int
-mesg_hshake_bfinish(struct mesg_state *state, uint8_t *buf, size_t size)
+packet_hshake_bfinish(struct packet_state *state, uint8_t *buf, size_t size)
 {
-	return mesg_unlock(state, buf, size);
+	return packet_unlock(state, buf, size);
 }
 
 int
-mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
+packet_hshake_dcheck(struct packet_state *state, uint8_t buf[PACKET_HELLO_SIZE])
 {
-	struct mesg_hshake_dstate *hsd = &state->u.hsd;
+	struct packet_hshake_dstate *hsd = &state->u.hsd;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
 
 	if (try_decrypt_hello(hsd, hellomsg))
@@ -710,11 +710,11 @@ mesg_hshake_dcheck(struct mesg_state *state, uint8_t buf[MESG_HELLO_SIZE])
 }
 
 void
-mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
+packet_hshake_dreply(struct packet_state *state, uint8_t buf[PACKET_REPLY_SIZE])
 {
-	struct mesg_hshake_dstate *hsd = &state->u.hsd;
-	struct mesg_ratchet_dstate *rad = &state->u.rad;
-	struct mesg_ratchet_state_common *ra = &state->u.rad.rac;
+	struct packet_hshake_dstate *hsd = &state->u.hsd;
+	struct packet_ratchet_dstate *rad = &state->u.rad;
+	struct packet_ratchet_state_common *ra = &state->u.rad.rac;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh[128];
 	uint8_t iskc[32], ikc[32], ikd[32], ekd_prv[32];
@@ -728,7 +728,7 @@ mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 		hsd->shared,
 		zero_nonce,
 		replymsg->eks,
-		MESG_REPLY_SIZE - offsetof(struct hshake_reply_msg, eks));
+		PACKET_REPLY_SIZE - offsetof(struct hshake_reply_msg, eks));
 
 	crypto_x25519(dh,      hsd->ikd_prv, hsd->ikc);
 	crypto_x25519(dh + 32, hsd->ikd_prv, hsd->ekc);
@@ -760,7 +760,7 @@ mesg_hshake_dreply(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 
 static
 int
-try_decrypt_reply(struct mesg_hshake_cstate *hsc, struct hshake_reply_msg *replymsg)
+try_decrypt_reply(struct packet_hshake_cstate *hsc, struct hshake_reply_msg *replymsg)
 {
 	int result;
 
@@ -770,7 +770,7 @@ try_decrypt_reply(struct mesg_hshake_cstate *hsc, struct hshake_reply_msg *reply
 		zero_nonce,
 		replymsg->mac,
 		replymsg->eks,
-		MESG_REPLY_SIZE - offsetof(struct hshake_reply_msg, eks));
+		PACKET_REPLY_SIZE - offsetof(struct hshake_reply_msg, eks));
 
 	if (!result)
 		crypto_wipe(hsc->shared, 32);
@@ -779,10 +779,10 @@ try_decrypt_reply(struct mesg_hshake_cstate *hsc, struct hshake_reply_msg *reply
 }
 
 int
-mesg_hshake_cfinish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
+packet_hshake_cfinish(struct packet_state *state, uint8_t buf[PACKET_REPLY_SIZE])
 {
-	struct mesg_hshake_cstate *hsc = &state->u.hsc;
-	struct mesg_ratchet_state_common *ra = &state->u.ra.rac;
+	struct packet_hshake_cstate *hsc = &state->u.hsc;
+	struct packet_ratchet_state_common *ra = &state->u.ra.rac;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh_hs[128];
 	uint8_t dh_ra[32];
@@ -801,7 +801,7 @@ mesg_hshake_cfinish(struct mesg_state *state, uint8_t buf[MESG_REPLY_SIZE])
 	memcpy(ikd, hsc->ikd, 32);
 
 	/* switch from hshake state to ratchet state */
-	crypto_wipe(state, sizeof(struct mesg_state));
+	crypto_wipe(state, sizeof(struct packet_state));
 
 	hshake_compute_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh_hs);
 	generate_kex_keypair(ra->dhks, ra->dhks_prv);
@@ -842,14 +842,14 @@ offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 }
 
 int
-mesg_hshake_aprepare(struct mesg_state *state,
+packet_hshake_aprepare(struct packet_state *state,
 	const uint8_t ika[32], const uint8_t ika_prv[32],
 	const uint8_t iskb[32], const uint8_t ikb[32],
 	const uint8_t spkb[32], const uint8_t spkb_sig[64],
 	const uint8_t opkb[32])
 {
-	struct mesg_ratchet_astate_prerecv *rap = &state->u.rap;
-	struct mesg_ratchet_state_common *ra = &rap->rac;
+	struct packet_ratchet_astate_prerecv *rap = &state->u.rap;
+	struct packet_ratchet_state_common *ra = &rap->rac;
 	uint8_t dh[128];
 	uint8_t hk[32];
 	uint8_t eka_prv[32];
@@ -891,10 +891,10 @@ mesg_hshake_aprepare(struct mesg_state *state,
 }
 
 void
-mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize)
+packet_hshake_ahello(struct packet_state *state, uint8_t *buf, size_t msgsize)
 {
 	struct hshake_ohello_msg *msg = (struct hshake_ohello_msg *)buf;
-	struct mesg_ratchet_astate_prerecv *rap = &state->u.rap;
+	struct packet_ratchet_astate_prerecv *rap = &state->u.rap;
 
 	msg->msgtype = 0;
 	memcpy(msg->eka, rap->eka, 32);
@@ -907,18 +907,18 @@ mesg_hshake_ahello(struct mesg_state *state, uint8_t *buf, size_t msgsize)
 		msg->nonce,
 		&msg->msgtype,
 		sizeof(struct hshake_ohello_msg) - offsetof(struct hshake_ohello_msg, msgtype));
-	mesg_lock(state, msg->message, msgsize);
+	packet_lock(state, msg->message, msgsize);
 }
 
 size_t
-send_ohello_message(struct mesg_state *state, struct mesg_state *p2pstate,
+send_ohello_message(struct packet_state *state, struct packet_state *p2pstate,
 		uint8_t recipient_isk[32], uint8_t *buf,
 		const uint8_t *text, size_t text_size)
 {
-	struct msg_forward_msg *msg = (void *)MESG_TEXT(buf);
-	uint8_t *smsg = MESG_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of encapsulated message */
-	uint8_t *cbuf = smsg + MESG_P2PHELLO_SIZE(0); /* start of internal message */
-	uint8_t *ctext = MESG_TEXT(cbuf);
+	struct msg_forward_msg *msg = (void *)PACKET_TEXT(buf);
+	uint8_t *smsg = PACKET_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of encapsulated message */
+	uint8_t *cbuf = smsg + PACKET_P2PHELLO_SIZE(0); /* start of internal message */
+	uint8_t *ctext = PACKET_TEXT(cbuf);
 	uint16_t msglength;
 
 	/* actual peer-to-peer message */
@@ -927,32 +927,32 @@ send_ohello_message(struct mesg_state *state, struct mesg_state *p2pstate,
 	}
 	store16_le(ctext, text_size);
 
-	msglength = padme_enc(MESG_P2PHELLO_SIZE(2 + text_size)) - MESG_P2PHELLO_SIZE(0);
-	store16_le(cbuf - 2, MESG_BUF_SIZE(msglength));
-	mesg_hshake_ahello(p2pstate, smsg, msglength);
+	msglength = padme_enc(PACKET_P2PHELLO_SIZE(2 + text_size)) - PACKET_P2PHELLO_SIZE(0);
+	store16_le(cbuf - 2, PACKET_BUF_SIZE(msglength));
+	packet_hshake_ahello(p2pstate, smsg, msglength);
 
 	/* message-forwarding message to server */
 	msg->msg.proto = PROTO_MSG;
 	msg->msg.type = MSG_FORWARD_MSG;
 	memcpy(msg->isk, recipient_isk, 32);
 	msg->message_count = 1;
-	store16_le(msg->messages, MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength)));
+	store16_le(msg->messages, PACKET_P2PHELLO_SIZE(PACKET_BUF_SIZE(msglength)));
 
 	{
-		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + MESG_P2PHELLO_SIZE(MESG_BUF_SIZE(msglength))));
-		mesg_lock(state, buf, msgsize);
+		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + PACKET_P2PHELLO_SIZE(PACKET_BUF_SIZE(msglength))));
+		packet_lock(state, buf, msgsize);
 		return msgsize;
 	}
 }
 
 size_t
-send_omsg_message(struct mesg_state *state, struct mesg_state *p2pstate,
+send_omsg_message(struct packet_state *state, struct packet_state *p2pstate,
 		uint8_t recipient_isk[32], uint8_t *buf,
 		const uint8_t *text, size_t text_size)
 {
-	struct msg_forward_msg *msg = (void *)MESG_TEXT(buf);
-	uint8_t *cbuf = MESG_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of internal message */
-	uint8_t *ctext = MESG_TEXT(cbuf);
+	struct msg_forward_msg *msg = (void *)PACKET_TEXT(buf);
+	uint8_t *cbuf = PACKET_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of internal message */
+	uint8_t *ctext = PACKET_TEXT(cbuf);
 	uint16_t msglength;
 
 	/* actual peer-to-peer message */
@@ -961,25 +961,25 @@ send_omsg_message(struct mesg_state *state, struct mesg_state *p2pstate,
 	}
 	store16_le(ctext, text_size);
 	msglength = padme_enc(text_size + 2);
-	mesg_lock(p2pstate, cbuf, msglength);
+	packet_lock(p2pstate, cbuf, msglength);
 
 	/* message-forwarding message to server */
 	msg->msg.proto = PROTO_MSG;
 	msg->msg.type = MSG_FORWARD_MSG;
-	store16_le(msg->msg.len, MSG_FORWARD_MSG_SIZE(2 + MESG_BUF_SIZE(msglength)));
+	store16_le(msg->msg.len, MSG_FORWARD_MSG_SIZE(2 + PACKET_BUF_SIZE(msglength)));
 	memcpy(msg->isk, recipient_isk, 32);
 	msg->message_count = 1;
-	store16_le(msg->messages, MESG_BUF_SIZE(msglength));
+	store16_le(msg->messages, PACKET_BUF_SIZE(msglength));
 
 	{
-		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + MESG_BUF_SIZE(msglength)));
-		mesg_lock(state, buf, msgsize);
+		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + PACKET_BUF_SIZE(msglength)));
+		packet_lock(state, buf, msgsize);
 		return msgsize;
 	}
 }
 
 size_t
-send_message(struct mesg_state *state, struct mesg_state *p2pstate,
+send_message(struct packet_state *state, struct packet_state *p2pstate,
 		uint8_t recipient_isk[32], uint8_t *buf,
 		const uint8_t *text, size_t text_size)
 {
@@ -990,7 +990,7 @@ send_message(struct mesg_state *state, struct mesg_state *p2pstate,
 
 #if 0
 int
-mesg_example1(int fd)
+packet_example1(int fd)
 {
 	/* uint8_t iska[32], iska_prv[32]; */
 	uint8_t ika[32], ika_prv[64];
@@ -1000,34 +1000,34 @@ mesg_example1(int fd)
 	uint8_t spkb[32], spkb_sig[64];
 	uint8_t opkb[32];
 	uint8_t buf[65536];
-	struct mesg_state state;
+	struct packet_state state;
 
 	/* Prepare the message state for the first handshake message */
-	if (mesg_hshake_aprepare(&state,
+	if (packet_hshake_aprepare(&state,
 			ika, ika_prv,
 			iskb, ikb, /*ikb_sig,*/ spkb, spkb_sig, opkb))
 		return -1;
 
 	/* Create the P2PHELLO (OFFLINE-HELLO) message and update state */
-	mesg_hshake_ahello(&state, buf, 0);
+	packet_hshake_ahello(&state, buf, 0);
 
 	/* Write the P2PHELLO message out to a socket */
-	(void)!write(fd, buf, MESG_P2PHELLO_SIZE(0));
+	(void)!write(fd, buf, PACKET_P2PHELLO_SIZE(0));
 
 	/* Wipe the P2PHELLO message now it has been sent */
-	crypto_wipe(buf, MESG_P2PHELLO_SIZE(0));
+	crypto_wipe(buf, PACKET_P2PHELLO_SIZE(0));
 
 	return 0;
 }
 
 int
-mesg_example2(int fd __attribute__((unused)))
+packet_example2(int fd __attribute__((unused)))
 {
 	return -1;
 }
 
 int
-mesg_example3(int fd)
+packet_example3(int fd)
 {
 	/* These need to be obtained somehow */
 	uint8_t server_sig_public_key[32];
@@ -1035,7 +1035,7 @@ mesg_example3(int fd)
 	/* In reality these are long-term keys, not generated every time. */
 	uint8_t sign_public_key[32], sign_private_key[32];
 	uint8_t kex_public_key[32], kex_private_key[32];
-	struct mesg_state state;
+	struct packet_state state;
 
 	memcpy(server_sig_public_key, isks, 32);
 	(void)isks_prv;
@@ -1046,78 +1046,78 @@ mesg_example3(int fd)
 	generate_kex_keypair(kex_public_key, kex_private_key);
 
 	{
-		uint8_t buf[MESG_HSHAKE_SIZE];
+		uint8_t buf[PACKET_HSHAKE_SIZE];
 
 		/* Prepare the message state for the first handshake message */
-		mesg_hshake_cprepare(&state,
+		packet_hshake_cprepare(&state,
 			server_sig_public_key, server_kex_public_key,
 			sign_public_key, sign_private_key,
 			kex_public_key, kex_private_key);
 
 		/* Create the HELLO message and update state */
-		mesg_hshake_chello(&state, buf);
+		packet_hshake_chello(&state, buf);
 
 		/* Write the hello message out to a socket */
-		(void)!write(fd, buf, MESG_HELLO_SIZE);
+		(void)!write(fd, buf, PACKET_HELLO_SIZE);
 
 		/* Wipe the hello message now it has been sent */
-		crypto_wipe(buf, MESG_HELLO_SIZE);
+		crypto_wipe(buf, PACKET_HELLO_SIZE);
 
 		/* Read a reply back from the peer */
-		(void)!read(fd, buf, MESG_REPLY_SIZE);
+		(void)!read(fd, buf, PACKET_REPLY_SIZE);
 
 		/* Check the handshake reply's integrity and update state */
-		if (mesg_hshake_cfinish(&state, buf)) {
-			crypto_wipe(buf, MESG_REPLY_SIZE);
+		if (packet_hshake_cfinish(&state, buf)) {
+			crypto_wipe(buf, PACKET_REPLY_SIZE);
 			return -1;
 		}
 		
 		/* Wipe the reply message now it has been checked */
-		crypto_wipe(buf, MESG_REPLY_SIZE);
+		crypto_wipe(buf, PACKET_REPLY_SIZE);
 	}
 
 	return 0;
 }
 
 int
-mesg_example4(int fd)
+packet_example4(int fd)
 {
 	/* In reality these are long-term keys, not generated every time. */
 	uint8_t sign_public_key[32], sign_private_key[32];
 	uint8_t kex_public_key[32], kex_private_key[32];
-	struct mesg_state state;
+	struct packet_state state;
 
 	generate_sig_keypair(sign_public_key, sign_private_key);
 	generate_kex_keypair(kex_public_key, kex_private_key);
 
 	/* Prepare the message state as an online handshake replier */
-	mesg_hshake_dprepare(&state,
+	packet_hshake_dprepare(&state,
 		sign_public_key, sign_private_key,
 		kex_public_key, kex_private_key);
 
 	{
-		uint8_t buf[MESG_HSHAKE_SIZE];
+		uint8_t buf[PACKET_HSHAKE_SIZE];
 
 		/* Read a hello message from a peer */
-		(void)!read(fd, buf, MESG_HELLO_SIZE);
+		(void)!read(fd, buf, PACKET_HELLO_SIZE);
 
 		/* Check the handshake hello and update state */
-		if (mesg_hshake_dcheck(&state, buf)) {
-			crypto_wipe(buf, MESG_HELLO_SIZE);
+		if (packet_hshake_dcheck(&state, buf)) {
+			crypto_wipe(buf, PACKET_HELLO_SIZE);
 			return -1;
 		}
 
 		/* Wipe the hello message now it has been checked */
-		crypto_wipe(buf, MESG_HELLO_SIZE);
+		crypto_wipe(buf, PACKET_HELLO_SIZE);
 
 		/* Create the reply message and update state */
-		mesg_hshake_dreply(&state, buf);
+		packet_hshake_dreply(&state, buf);
 
 		/* Write the reply message out to the socket */
-		(void)!write(fd, buf, MESG_REPLY_SIZE);
+		(void)!write(fd, buf, PACKET_REPLY_SIZE);
 
 		/* Wipe the reply message now it has been sent */
-		crypto_wipe(buf, MESG_REPLY_SIZE);
+		crypto_wipe(buf, PACKET_REPLY_SIZE);
 	}
 
 	return 0;

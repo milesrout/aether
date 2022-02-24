@@ -25,7 +25,7 @@
 #include "monocypher.h"
 
 #include "util.h"
-#include "mesg.h"
+#include "packet.h"
 #include "msg.h"
 #include "ident.h"
 

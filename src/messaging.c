@@ -22,13 +22,13 @@
 #include <string.h>
 #include "msg.h"
 #include "messaging.h"
-#include "mesg.h"
+#include "packet.h"
 #include "util.h"
 
 size_t
 msg_fetch_init(uint8_t *buf)
 {
-	struct msg_fetch_msg *msg = (struct msg_fetch_msg *)MESG_TEXT(buf);
+	struct msg_fetch_msg *msg = (struct msg_fetch_msg *)PACKET_TEXT(buf);
 
 	msg->msg.proto = PROTO_MSG;
 	msg->msg.type = MSG_FETCH_MSG;
