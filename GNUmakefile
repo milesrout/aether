@@ -29,7 +29,7 @@ OBJS      := $(SRCS:%=build/$(BUILD)/%.o)
 DEPS      := $(OBJS:%.o=%.d)
 
 #INCS      := $(addprefix -I,$(shell find ./include -type d))
-INCS      := -I./include
+INCS      := -iquote./include
 
 WARNINGS  += -pedantic -pedantic-errors -Wno-overlength-strings
 WARNINGS  += -fmax-errors=2 -Wall -Wextra -Wdouble-promotion -Wformat=2

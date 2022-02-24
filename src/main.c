@@ -32,6 +32,7 @@
 #define STBDS_NO_SHORT_NAMES
 #include "stb_ds.h"
 
+#include "err.h"
 #include "hkdf.h"
 #include "util.h"
 #include "packet.h"
@@ -46,7 +47,7 @@
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
 
-static const char *progname;
+const char *progname;
 
 /* A note on terminology.
  *
@@ -238,22 +239,16 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 	uint8_t failure = 1;
 	ssize_t result;
 
-	if (size < IDENT_REGISTER_MSG_BASE_SIZE) {
-		fprintf(stderr, "Registration message (%lu) is too short (%lu).\n",
+	if (size < IDENT_REGISTER_MSG_BASE_SIZE)
+		errg("Registration message (%lu) is too short (%lu).\n",
 			size, IDENT_REGISTER_MSG_BASE_SIZE);
-		goto fail;
-	}
 
-	if (size < IDENT_REGISTER_MSG_SIZE(msg->username_len)) {
-		fprintf(stderr, "Registration message (%lu) is the wrong size (%lu).\n",
+	if (size < IDENT_REGISTER_MSG_SIZE(msg->username_len))
+		errg("Registration message (%lu) is the wrong size (%lu).\n",
 			size, IDENT_REGISTER_MSG_SIZE(msg->username_len));
-		goto fail;
-	}
 
-	if (msg->username[msg->username_len] != '\0') {
-		fprintf(stderr, "Cannot register a username that is not a valid string.\n");
-		goto fail;
-	}
+	if (msg->username[msg->username_len] != '\0')
+		errg("Cannot register a username that is not a valid string.\n");
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) != NULL) {
@@ -261,14 +256,11 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 			failure = 0;
 			goto fail;
 		}
-		fprintf(stderr, "Cannot register an already-registered identity key.\n");
-		goto fail;
+		errg("Cannot register an already-registered identity key.\n");
 	}
 
-	if (stbds_shgetp_null(ctx->namestable, msg->username) != NULL) {
-		fprintf(stderr, "Cannot register an already-registered username.\n");
-		goto fail;
-	}
+	if (stbds_shgetp_null(ctx->namestable, msg->username) != NULL)
+		errg("Cannot register an already-registered username.\n");
 
 	failure = 0;
 
@@ -302,22 +294,16 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	uint8_t failure = 1;
 	ssize_t result;
 
-	if (size < IDENT_SPKSUB_MSG_SIZE) {
-		fprintf(stderr, "Signed prekey submission message (%lu) is the wrong size (%lu).\n",
+	if (size < IDENT_SPKSUB_MSG_SIZE)
+		errg("Signed prekey submission message (%lu) is the wrong size (%lu).\n",
 			size, IDENT_SPKSUB_MSG_SIZE);
-		goto fail;
-	}
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
-		fprintf(stderr, "Can only submit a signed prekey for a registered identity.\n");
-		goto fail;
-	}
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
+		errg("Can only submit a signed prekey for a registered identity.\n");
 
-	if (check_key(isk.data, "AIBS", msg->spk, msg->spk_sig)) {
-		fprintf(stderr, "Failed signature\n");
-		goto fail;
-	}
+	if (check_key(isk.data, "AIBS", msg->spk, msg->spk_sig))
+		errg("Failed signature\n");
 
 	failure = 0;
 	memcpy(kv->value.spk, msg->spk, 32);
@@ -348,25 +334,19 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t n
 	uint8_t failure = 1;
 	ssize_t result;
 
-	if (size < IDENT_OPKSSUB_MSG_BASE_SIZE) {
-		fprintf(stderr, "One-time prekey submission message (%lu) is too short (%lu).\n",
+	if (size < IDENT_OPKSSUB_MSG_BASE_SIZE)
+		errg("One-time prekey submission message (%lu) is too short (%lu).\n",
 				size, IDENT_OPKSSUB_MSG_BASE_SIZE);
-		goto fail;
-	}
 
 	opkcount = load16_le(msg->opk_count);
 	fprintf(stderr, "OPK count: %d\n", opkcount);
-	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount)) {
-		fprintf(stderr, "One-time prekey submission message (%lu) is the wrong size (%lu).\n",
+	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount))
+		errg("One-time prekey submission message (%lu) is the wrong size (%lu).\n",
 				size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
-		goto fail;
-	}
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
-		fprintf(stderr, "Can only submit one-time prekeys for a registered identity.\n");
-		goto fail;
-	}
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
+		errg("Can only submit one-time prekeys for a registered identity.\n");
 
 	failure = 0;
 
@@ -400,21 +380,15 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	uint8_t namelen;
 	ssize_t result;
 
-	if (size < IDENT_LOOKUP_MSG_BASE_SIZE) {
-		fprintf(stderr, "Username lookup message (%lu) is too small (%lu).\n",
+	if (size < IDENT_LOOKUP_MSG_BASE_SIZE)
+		errg("Username lookup message (%lu) is too small (%lu).\n",
 				size, IDENT_LOOKUP_MSG_BASE_SIZE);
-		goto fail;
-	}
 	namelen = msg->username_len;
-	if (size < IDENT_LOOKUP_MSG_SIZE(namelen)) {
-		fprintf(stderr, "Username lookup message (%lu) is the wrong size (%lu).\n",
+	if (size < IDENT_LOOKUP_MSG_SIZE(namelen))
+		errg("Username lookup message (%lu) is the wrong size (%lu).\n",
 				size, IDENT_LOOKUP_MSG_SIZE(namelen));
-		goto fail;
-	}
-	if (msg->username[namelen] != '\0') {
-		fprintf(stderr, "Username lookup message is invalid.\n");
-		goto fail;
-	}
+	if (msg->username[namelen] != '\0')
+		errg("Username lookup message is invalid.\n");
 
 	k = stbds_shget(ctx->namestable, msg->username);
 
@@ -440,18 +414,14 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, s
 	struct userinfo blank = {0}, *value = &blank;
 	ssize_t result;
 
-	if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE) {
-		fprintf(stderr, "Username reverse-lookup message (%lu) is too small (%lu).\n",
-				size, IDENT_REVERSE_LOOKUP_MSG_SIZE);
-		goto fail;
-	}
+	if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE)
+		errg("Username reverse-lookup message (%lu) is too small (%lu).\n",
+			size, IDENT_REVERSE_LOOKUP_MSG_SIZE);
 
 	memcpy(isk.data, msg->isk, 32);
 	displaykey("isk", isk.data, 32);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
-		fprintf(stderr, "Can only look up a username of a registered identity.\n");
-		goto fail;
-	}
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
+		errg("Can only look up a username of a registered identity.\n");
 
 	value = &kv->value;
 	fprintf(stderr, "value = %p\n", (void *)value->username);
@@ -479,17 +449,13 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	struct key opk = {0};
 	ssize_t result;
 
-	if (size < IDENT_KEYREQ_MSG_SIZE) {
-		fprintf(stderr, "Key bundle request message (%lu) is the wrong size (%lu).\n",
+	if (size < IDENT_KEYREQ_MSG_SIZE)
+		errg("Key bundle request message (%lu) is the wrong size (%lu).\n",
 			size, IDENT_KEYREQ_MSG_SIZE);
-		goto fail;
-	}
 
 	memcpy(isk.data, msg->isk, 32);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
-		fprintf(stderr, "Can only request a key bundle for a registered identity.\n");
-		goto fail;
-	}
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
+		errg("Can only request a key bundle for a registered identity.\n");
 
 	value = &kv->value;
 
@@ -527,27 +493,21 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nre
 	size_t totalmsglength;
 	ssize_t result;
 
-	if (size < MSG_FETCH_MSG_SIZE) {
-		fprintf(stderr, "Message-fetching message (%lu) is too small (%lu).\n",
-				size, MSG_FETCH_MSG_SIZE);
-		goto fail;
-	}
+	if (size < MSG_FETCH_MSG_SIZE)
+		errg("Message-fetching message (%lu) is too small (%lu).\n",
+			size, MSG_FETCH_MSG_SIZE);
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
-		fprintf(stderr, "Only registered identities may fetch messages.\n");
-		goto fail;
-	}
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
+		errg("Only registered identities may fetch messages.\n");
 
 	/* TODO: set to maximum value that makes total packet size <= 64k */
 	/* slack = 32768; */
 
 	/* for now, fetch only 1 message at a time */
 	arrlen = stbds_arrlen(kv->value.letterbox);
-	if (arrlen == 0) {
-		fprintf(stderr, "No messages to fetch.\n");
-		goto fail;
-	}
+	if (arrlen == 0)
+		errg("No messages to fetch.\n");
 	smsg = kv->value.letterbox[0];
 	stbds_arrdel(kv->value.letterbox, 0);
 	msgcount = 1;

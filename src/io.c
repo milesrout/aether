@@ -25,6 +25,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "err.h"
 #include "io.h"
 
 int
@@ -82,13 +83,10 @@ safe_read(int fd, uint8_t *buf, size_t max_size_p1)
 	do nread = read(fd, buf, max_size_p1);
 	while (nread == -1 && errno == EINTR);
 
-	if (nread == -1) {
-		fprintf(stderr, "Error while reading from socket (%d).\n", errno);
-		exit(EXIT_FAILURE);
-	}
+	if (nread == -1)
+		err(EXIT_FAILURE, "Could not read from socket");
 	if ((size_t)nread == max_size_p1) {
-		fprintf(stderr, "Peer sent a packet that is too large.\n");
-		exit(EXIT_FAILURE);
+		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
 	}
 
 	return nread;
@@ -102,17 +100,12 @@ safe_read_nonblock(int fd, uint8_t *buf, size_t max_size_p1)
 	do nread = recv(fd, buf, max_size_p1, MSG_DONTWAIT);
 	while (nread == -1 && errno == EINTR);
 
-	if (nread == -1 && errno == EAGAIN) {
+	if (nread == -1 && errno == EAGAIN)
 		return 0;
-	}
-	if (nread == -1) {
-		fprintf(stderr, "Error while reading from socket (%d).\n", errno);
-		exit(EXIT_FAILURE);
-	}
-	if ((size_t)nread == max_size_p1) {
-		fprintf(stderr, "Peer sent a packet that is too large.\n");
-		exit(EXIT_FAILURE);
-	}
+	if (nread == -1)
+		err(EXIT_FAILURE, "Could not read from socket");
+	if ((size_t)nread == max_size_p1)
+		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
 
 	return nread;
 }
@@ -131,17 +124,13 @@ safe_read_timeout(int fd, uint8_t *buf, size_t max_size_p1, time_t timeout)
 	tv.tv_sec = 0;
 	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
 
-	if (nread == -1 && errno == EAGAIN) {
+	if (nread == -1 && errno == EAGAIN)
 		return 0;
-	}
-	if (nread == -1) {
-		fprintf(stderr, "Error while reading from socket (%d).\n", errno);
-		exit(EXIT_FAILURE);
-	}
-	if ((size_t)nread == max_size_p1) {
-		fprintf(stderr, "Peer sent a packet that is too large.\n");
-		exit(EXIT_FAILURE);
-	}
+
+	if (nread == -1)
+		err(EXIT_FAILURE, "Could not read from socket.");
+	if ((size_t)nread == max_size_p1)
+		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
 
 	return nread;
 }
@@ -158,14 +147,11 @@ safe_recvfrom(int fd, uint8_t *buf, size_t max_size_p1,
 			sstosa(peeraddr), peeraddr_len);
 	} while (nread == -1 && errno == EINTR);
 
-	if (nread == -1) {
-		fprintf(stderr, "Error while reading from socket.\n");
-		exit(EXIT_FAILURE);
-	}
-	if ((size_t)nread == max_size_p1) {
-		fprintf(stderr, "Peer sent a packet that is too large.\n");
-		exit(EXIT_FAILURE);
-	}
+
+	if (nread == -1)
+		err(EXIT_FAILURE, "Could not read from socket.");
+	if ((size_t)nread == max_size_p1)
+		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
 
 	return nread;
 }
@@ -181,10 +167,8 @@ safe_write(int fd, const uint8_t *buf, size_t size)
 			result = write(fd, buf, size);
 			continue;
 		}
-		if (result == -1) {
-			fprintf(stderr, "Error while writing to socket.\n");
-			exit(EXIT_FAILURE);
-		}
+		if (result == -1)
+			err(EXIT_FAILURE, "Could not write to socket.");
 		buf += result;
 		size -= result;
 		result = write(fd, buf, size);
@@ -202,10 +186,8 @@ safe_sendto(int fd, const uint8_t *buf, size_t size, struct sockaddr *peeraddr, 
 			result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
 			continue;
 		}
-		if (result == -1) {
-			fprintf(stderr, "Error while writing to socket.\n");
-			exit(EXIT_FAILURE);
-		}
+		if (result == -1)
+			err(EXIT_FAILURE, "Could not write to socket.");
 		buf += result;
 		size -= result;
 		result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);

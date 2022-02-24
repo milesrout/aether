@@ -26,6 +26,7 @@
 #define STBDS_NO_SHORT_NAMES
 #include "stb_ds.h"
 
+#include "err.h"
 #include "packet.h"
 #include "msg.h"
 #include "ident.h"
@@ -84,22 +85,16 @@ alice(int argc, char **argv)
 
 	/* recv REPLY message */
 	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
-	if (nread < PACKET_REPLY_SIZE) {
-		fprintf(stderr, "Received invalid reply from server.\n");
-		goto fail;
-	}
-	if (packet_hshake_cfinish(&state, buf)) {
-		fprintf(stderr, "Reply message cannot be decrypted.\n");
-		goto fail;
-	}
+	if (nread < PACKET_REPLY_SIZE)
+		errg("Received invalid reply from server.\n");
+	if (packet_hshake_cfinish(&state, buf))
+		errg("Reply message cannot be decrypted.\n");
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	/* REGISTER username */
 	randusername(username, "alice");
-	if (register_identity(&state, &ident, fd, buf, username)) {
-		fprintf(stderr, "Cannot register username %s\n", username);
-		goto fail;
-	}
+	if (register_identity(&state, &ident, fd, buf, username))
+		errg("Cannot register username %s\n", username);
 
 	/* send LOOKUP */
 	bobstate.username = "bob";
@@ -110,27 +105,19 @@ alice(int argc, char **argv)
 
 	/* recv LOOKUP reply */
 	nread = safe_read(fd, buf, 65536);
-	if (nread < PACKET_BUF_SIZE(0)) {
-		fprintf(stderr, "Received a message that is too small.\n");
-		goto fail;
-	}
-	if (packet_unlock(&state, buf, nread)) {
-		fprintf(stderr, "Message cannot be decrypted.\n");
-		goto fail;
-	}
+	if (nread < PACKET_BUF_SIZE(0))
+		errg("Received a message that is too small.\n");
+	if (packet_unlock(&state, buf, nread))
+		errg("Message cannot be decrypted.\n");
 
 	{
 		struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)PACKET_TEXT(buf);
-		if (PACKET_TEXT_SIZE(nread) < sizeof *msg) {
-			fprintf(stderr, "Identity lookup reply message (%lu) is too small (%lu).\n",
+		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
+			errg("Identity lookup reply message (%lu) is too small (%lu).\n",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
-			goto fail;
-		}
-		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_LOOKUP_REP) {
-			fprintf(stderr, "Identity lookup reply message has invalid proto or msgtype (%d, %d).\n",
+		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_LOOKUP_REP)
+			errg("Identity lookup reply message has invalid proto or msgtype (%d, %d).\n",
 				msg->msg.proto, msg->msg.type);
-			goto fail;
-		}
 
 		memcpy(bobstate.key.data, msg->isk, 32);
 		stbds_hmputs(p2ptable, bobstate);
@@ -145,28 +132,20 @@ alice(int argc, char **argv)
 
 	/* recv KEYREQ reply */
 	nread = safe_read(fd, buf, 65536);
-	if (nread < PACKET_BUF_SIZE(0)) {
-		fprintf(stderr, "Received a message that is too small.\n");
-		goto fail;
-	}
+	if (nread < PACKET_BUF_SIZE(0))
+		errg("Received a message that is too small.\n");
 
-	if (packet_unlock(&state, buf, nread)) {
-		fprintf(stderr, "Message cannot be decrypted.\n");
-		goto fail;
-	}
+	if (packet_unlock(&state, buf, nread))
+		errg("Message cannot be decrypted.\n");
 
 	{
 		struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)PACKET_TEXT(buf);
-		if (PACKET_TEXT_SIZE(nread) < sizeof *msg) {
-			fprintf(stderr, "Key bundle request reply message (%lu) is too small (%lu).\n",
+		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
+			errg("Key bundle request reply message (%lu) is too small (%lu).\n",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
-			goto fail;
-		}
-		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_KEYREQ_REP) {
-			fprintf(stderr, "Key bundle request reply message has invalid proto or msgtype (%d, %d).\n",
+		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_KEYREQ_REP)
+			errg("Key bundle request reply message has invalid proto or msgtype (%d, %d).\n",
 				msg->msg.proto, msg->msg.type);
-			goto fail;
-		}
 
 		crypto_from_eddsa_public(ikb, p2pstate->key.data);
 		memcpy(spkb,     msg->spk,     32);
@@ -178,10 +157,8 @@ alice(int argc, char **argv)
 
 	/* Peer-to-peer HELLO */
 	if (packet_hshake_aprepare(&p2pstate->state, ident.ik, ident.ik_prv,
-			p2pstate->key.data, ikb, spkb, spkb_sig, opkb)) {
-		fprintf(stderr, "Error preparing handshake.\n");
-		goto fail;
-	}
+			p2pstate->key.data, ikb, spkb, spkb_sig, opkb))
+		errg("Error preparing handshake.\n");
 
 	/* Send and receive messages */
 	interactive(&ident, &state, &p2ptable, fd, buf);
