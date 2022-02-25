@@ -6,6 +6,7 @@
 -fstack-protector
 -ftrapv
 -g
+-I-
 -iquote./include
 -Og
 -pedantic

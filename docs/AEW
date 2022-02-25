@@ -49,7 +49,7 @@ Equivalent elsewhere: a matrix server, an email server, a web host
 User:  A user is AEW's conception of a particular identity of a person.
 It is assumed that a person may have more than one identity.  For example, a
 person might have a personal identity (Bruce <example.net:~bruce>), a work
-identity (Bruce <example.com:~bruce>) and a secret identity (Batman
+identity (Bruce <example.com:~BruceWayne>) and a secret identity (Batman
 <example.org:~batman>).  These identities can be separate, and clients must
 support multiple identities in a secure way that cannot be used by third
 parties to tie the identities together.  Every user is tied to a particular
