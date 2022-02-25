@@ -240,15 +240,15 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 	ssize_t result;
 
 	if (size < IDENT_REGISTER_MSG_BASE_SIZE)
-		errg("Registration message (%lu) is too short (%lu).\n",
+		errg("Registration message (%lu) is too short (%lu).",
 			size, IDENT_REGISTER_MSG_BASE_SIZE);
 
 	if (size < IDENT_REGISTER_MSG_SIZE(msg->username_len))
-		errg("Registration message (%lu) is the wrong size (%lu).\n",
+		errg("Registration message (%lu) is the wrong size (%lu).",
 			size, IDENT_REGISTER_MSG_SIZE(msg->username_len));
 
 	if (msg->username[msg->username_len] != '\0')
-		errg("Cannot register a username that is not a valid string.\n");
+		errg("Cannot register a username that is not a valid string.");
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) != NULL) {
@@ -256,11 +256,11 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 			failure = 0;
 			goto fail;
 		}
-		errg("Cannot register an already-registered identity key.\n");
+		errg("Cannot register an already-registered identity key.");
 	}
 
 	if (stbds_shgetp_null(ctx->namestable, msg->username) != NULL)
-		errg("Cannot register an already-registered username.\n");
+		errg("Cannot register an already-registered username.");
 
 	failure = 0;
 
@@ -295,15 +295,15 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	ssize_t result;
 
 	if (size < IDENT_SPKSUB_MSG_SIZE)
-		errg("Signed prekey submission message (%lu) is the wrong size (%lu).\n",
+		errg("Signed prekey submission message (%lu) is the wrong size (%lu).",
 			size, IDENT_SPKSUB_MSG_SIZE);
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only submit a signed prekey for a registered identity.\n");
+		errg("Can only submit a signed prekey for a registered identity.");
 
 	if (check_key(isk.data, "AIBS", msg->spk, msg->spk_sig))
-		errg("Failed signature\n");
+		errg("Failed signature");
 
 	failure = 0;
 	memcpy(kv->value.spk, msg->spk, 32);
@@ -335,18 +335,18 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t n
 	ssize_t result;
 
 	if (size < IDENT_OPKSSUB_MSG_BASE_SIZE)
-		errg("One-time prekey submission message (%lu) is too short (%lu).\n",
+		errg("One-time prekey submission message (%lu) is too short (%lu).",
 				size, IDENT_OPKSSUB_MSG_BASE_SIZE);
 
 	opkcount = load16_le(msg->opk_count);
 	fprintf(stderr, "OPK count: %d\n", opkcount);
 	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount))
-		errg("One-time prekey submission message (%lu) is the wrong size (%lu).\n",
+		errg("One-time prekey submission message (%lu) is the wrong size (%lu).",
 				size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only submit one-time prekeys for a registered identity.\n");
+		errg("Can only submit one-time prekeys for a registered identity.");
 
 	failure = 0;
 
@@ -381,14 +381,14 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	ssize_t result;
 
 	if (size < IDENT_LOOKUP_MSG_BASE_SIZE)
-		errg("Username lookup message (%lu) is too small (%lu).\n",
+		errg("Username lookup message (%lu) is too small (%lu).",
 				size, IDENT_LOOKUP_MSG_BASE_SIZE);
 	namelen = msg->username_len;
 	if (size < IDENT_LOOKUP_MSG_SIZE(namelen))
-		errg("Username lookup message (%lu) is the wrong size (%lu).\n",
+		errg("Username lookup message (%lu) is the wrong size (%lu).",
 				size, IDENT_LOOKUP_MSG_SIZE(namelen));
 	if (msg->username[namelen] != '\0')
-		errg("Username lookup message is invalid.\n");
+		errg("Username lookup message is invalid.");
 
 	k = stbds_shget(ctx->namestable, msg->username);
 
@@ -415,13 +415,13 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, s
 	ssize_t result;
 
 	if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE)
-		errg("Username reverse-lookup message (%lu) is too small (%lu).\n",
+		errg("Username reverse-lookup message (%lu) is too small (%lu).",
 			size, IDENT_REVERSE_LOOKUP_MSG_SIZE);
 
 	memcpy(isk.data, msg->isk, 32);
 	displaykey("isk", isk.data, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only look up a username of a registered identity.\n");
+		errg("Can only look up a username of a registered identity.");
 
 	value = &kv->value;
 	fprintf(stderr, "value = %p\n", (void *)value->username);
@@ -450,12 +450,12 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	ssize_t result;
 
 	if (size < IDENT_KEYREQ_MSG_SIZE)
-		errg("Key bundle request message (%lu) is the wrong size (%lu).\n",
+		errg("Key bundle request message (%lu) is the wrong size (%lu).",
 			size, IDENT_KEYREQ_MSG_SIZE);
 
 	memcpy(isk.data, msg->isk, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only request a key bundle for a registered identity.\n");
+		errg("Can only request a key bundle for a registered identity.");
 
 	value = &kv->value;
 
@@ -494,12 +494,12 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nre
 	ssize_t result;
 
 	if (size < MSG_FETCH_MSG_SIZE)
-		errg("Message-fetching message (%lu) is too small (%lu).\n",
+		errg("Message-fetching message (%lu) is too small (%lu).",
 			size, MSG_FETCH_MSG_SIZE);
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Only registered identities may fetch messages.\n");
+		errg("Only registered identities may fetch messages.");
 
 	/* TODO: set to maximum value that makes total packet size <= 64k */
 	/* slack = 32768; */
@@ -507,7 +507,7 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nre
 	/* for now, fetch only 1 message at a time */
 	arrlen = stbds_arrlen(kv->value.letterbox);
 	if (arrlen == 0)
-		errg("No messages to fetch.\n");
+		errg("No messages to fetch.");
 	smsg = kv->value.letterbox[0];
 	stbds_arrdel(kv->value.letterbox, 0);
 	msgcount = 1;
