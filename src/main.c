@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -150,6 +151,13 @@ struct stored_message {
 	uint8_t *data;
 };
 
+struct queued_packet {
+	struct peer *peer;
+	struct queued_packet *prev, *next;
+	size_t size;
+	uint8_t buf[65536];
+};
+
 struct userinfo {
 	uint8_t ik[32];
 	uint8_t spk[32];
@@ -169,6 +177,65 @@ struct usernamev {
 	char *key;
 	struct key value;
 };
+
+struct server_ctx {
+	struct peertable peertable;
+	struct userkv *table;
+	struct usernamev *namestable;
+	struct queued_packet *queue;
+	struct queued_packet *queue_end;
+	struct queued_packet *unused;
+};
+
+static
+struct queued_packet *
+enqueue_packet(struct server_ctx *ctx, struct peer *peer)
+{
+	struct queued_packet *p = NULL;
+
+	p = ctx->unused;
+	if (p)
+		ctx->unused = p->next;
+	else
+		p = malloc(sizeof *p);
+
+	if (!p)
+		err(EXIT_FAILURE, "Cannot allocate packet.");
+
+	memset(p, 0, sizeof *p);
+	p->next = ctx->queue;
+	p->peer = peer;
+	if (ctx->queue)
+		ctx->queue->prev = p;
+	ctx->queue = p;
+	if (!ctx->queue_end)
+		ctx->queue_end = p;
+
+	return p;
+}
+
+static
+struct queued_packet *
+dequeue_packet(struct server_ctx *ctx)
+{
+	struct queued_packet *p;
+
+	if (!ctx->queue_end)
+		return NULL;
+
+	p = ctx->queue_end;
+	ctx->queue_end = p->prev;
+
+	if (ctx->queue == p) {
+		ctx->queue = NULL;
+	} else {
+		if (p->prev)
+			p->prev->next = NULL;
+		p->prev = NULL;
+	}
+
+	return p;
+}
 
 static
 void
@@ -219,14 +286,8 @@ print_table(struct userkv *table)
 	}
 }
 
-struct server_ctx {
-	struct peertable peertable;
-	struct userkv *table;
-	struct usernamev *namestable;
-};
-
 static
-ssize_t
+void
 handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
 	struct packethdr *hdr = PACKET_HDR(buf);
@@ -237,7 +298,7 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 	struct userinfo ui = {0};
 	struct userkv *kv;
 	uint8_t failure = 1;
-	ssize_t result;
+	struct queued_packet *p;
 
 	if (size < IDENT_REGISTER_MSG_BASE_SIZE)
 		errg("Registration message (%lu) is too short (%lu).",
@@ -272,17 +333,17 @@ handle_register(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t 
 	stbds_hmput(ctx->table, isk, ui);
 
 fail:
-	result = ident_register_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
-	packet_lock(&peer->state, buf, result);
+	p = enqueue_packet(ctx, peer);
+	size = ident_register_ack_init(PACKET_TEXT(p->buf), hdr->msn, failure);
+	packet_lock(&peer->state, p->buf, size);
+	p->size = PACKET_BUF_SIZE(size);
 
 	print_table(ctx->table);
 	print_nametable(ctx->namestable);
-
-	return result;
 }
 
 static
-ssize_t
+void
 handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
 	struct packethdr *hdr = PACKET_HDR(buf);
@@ -292,7 +353,7 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	struct key isk;
 	struct userkv *kv;
 	uint8_t failure = 1;
-	ssize_t result;
+	struct queued_packet *p;
 
 	if (size < IDENT_SPKSUB_MSG_SIZE)
 		errg("Signed prekey submission message (%lu) is the wrong size (%lu).",
@@ -310,17 +371,16 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	memcpy(kv->value.spk_sig, msg->spk_sig, 64);
 
 fail:
-	result = ident_spksub_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
-	packet_lock(&peer->state, buf, result);
+	p = enqueue_packet(ctx, peer);
+	size = ident_spksub_ack_init(PACKET_TEXT(p->buf), hdr->msn, failure);
+	packet_lock(&peer->state, p->buf, size);
+	p->size = PACKET_BUF_SIZE(size);
 
 	print_table(ctx->table);
-	/* print_nametable(ctx->namestable); */
-
-	return result;
 }
 
 static
-ssize_t
+void
 handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
 	struct packethdr *hdr = PACKET_HDR(buf);
@@ -332,17 +392,17 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t n
 	int i;
 	uint16_t opkcount;
 	uint8_t failure = 1;
-	ssize_t result;
+	struct queued_packet *p;
 
 	if (size < IDENT_OPKSSUB_MSG_BASE_SIZE)
 		errg("One-time prekey submission message (%lu) is too short (%lu).",
-				size, IDENT_OPKSSUB_MSG_BASE_SIZE);
+			size, IDENT_OPKSSUB_MSG_BASE_SIZE);
 
 	opkcount = load16_le(msg->opk_count);
 	fprintf(stderr, "OPK count: %d\n", opkcount);
 	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount))
 		errg("One-time prekey submission message (%lu) is the wrong size (%lu).",
-				size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
+			size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
@@ -355,21 +415,19 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t n
 		struct key opk;
 		memcpy(opk.data, msg->opk[i], 32);
 		stbds_arrput(kv->value.opks, opk);
-		displaykey_short("opk", kv->value.opks[stbds_arrlen(kv->value.opks) - 1].data, 32);
 	}
 
 fail:
-	result = ident_opkssub_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
-	packet_lock(&peer->state, buf, result);
+	p = enqueue_packet(ctx, peer);
+	size = ident_opkssub_ack_init(PACKET_TEXT(p->buf), hdr->msn, failure);
+	packet_lock(&peer->state, p->buf, size);
+	p->size = PACKET_BUF_SIZE(size);
 
 	print_table(ctx->table);
-	/* print_nametable(ctx->namestable); */
-
-	return result;
 }
 
 static
-ssize_t
+void
 handle_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
 	struct packethdr *hdr = PACKET_HDR(buf);
@@ -378,31 +436,31 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
 	struct key k = {0};
 	uint8_t namelen;
-	ssize_t result;
+	struct queued_packet *p;
 
 	if (size < IDENT_LOOKUP_MSG_BASE_SIZE)
 		errg("Username lookup message (%lu) is too small (%lu).",
-				size, IDENT_LOOKUP_MSG_BASE_SIZE);
+			size, IDENT_LOOKUP_MSG_BASE_SIZE);
 	namelen = msg->username_len;
 	if (size < IDENT_LOOKUP_MSG_SIZE(namelen))
 		errg("Username lookup message (%lu) is the wrong size (%lu).",
-				size, IDENT_LOOKUP_MSG_SIZE(namelen));
+			size, IDENT_LOOKUP_MSG_SIZE(namelen));
 	if (msg->username[namelen] != '\0')
 		errg("Username lookup message is invalid.");
 
 	k = stbds_shget(ctx->namestable, msg->username);
 
 fail:
-	result = ident_lookup_rep_init(PACKET_TEXT(buf), hdr->msn, k.data);
-	packet_lock(&peer->state, buf, result);
+	p = enqueue_packet(ctx, peer);
+	size = ident_lookup_rep_init(PACKET_TEXT(p->buf), hdr->msn, k.data);
+	packet_lock(&peer->state, p->buf, size);
+	p->size = PACKET_BUF_SIZE(size);
 
-	/* print_table(ctx->table); */
 	print_nametable(ctx->namestable);
-
-	return result;
 }
+
 static
-ssize_t
+void
 handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
 	struct packethdr *hdr = PACKET_HDR(buf);
@@ -411,32 +469,32 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, s
 	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
 	struct key isk;
 	struct userkv *kv;
-	struct userinfo blank = {0}, *value = &blank;
-	ssize_t result;
+	char blankusername[] = "";
+	struct userinfo blank = {.username = blankusername}, *value = &blank;
+	struct queued_packet *p;
 
 	if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE)
 		errg("Username reverse-lookup message (%lu) is too small (%lu).",
 			size, IDENT_REVERSE_LOOKUP_MSG_SIZE);
 
 	memcpy(isk.data, msg->isk, 32);
-	displaykey("isk", isk.data, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
 		errg("Can only look up a username of a registered identity.");
 
 	value = &kv->value;
-	fprintf(stderr, "value = %p\n", (void *)value->username);
+
 fail:
-	result = ident_reverse_lookup_rep_init(PACKET_TEXT(buf), hdr->msn, value->username);
-	packet_lock(&peer->state, buf, result);
+	p = enqueue_packet(ctx, peer);
+	size = ident_reverse_lookup_rep_init(PACKET_TEXT(p->buf),
+		hdr->msn, value->username);
+	packet_lock(&peer->state, p->buf, size);
+	p->size = PACKET_BUF_SIZE(size);
 
-	/* print_table(ctx->table); */
 	print_nametable(ctx->namestable);
-
-	return result;
 }
 
 static
-ssize_t
+void
 handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nread)
 {
 	struct packethdr *hdr = PACKET_HDR(buf);
@@ -447,7 +505,7 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 	struct userkv *kv;
 	struct userinfo blank = {0}, *value = &blank;
 	struct key opk = {0};
-	ssize_t result;
+	struct queued_packet *p;
 
 	if (size < IDENT_KEYREQ_MSG_SIZE)
 		errg("Key bundle request message (%lu) is the wrong size (%lu).",
@@ -459,20 +517,19 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nr
 
 	value = &kv->value;
 
-	if (stbds_arrlen(value->opks) > 0) {
+	if (stbds_arrlen(value->opks) > 0)
 		opk = stbds_arrpop(value->opks);
-	} else {
+	else
 		crypto_wipe(opk.data, 32);
-	}
 
 fail:
-	result = ident_keyreq_rep_init(PACKET_TEXT(buf), hdr->msn, value->spk, value->spk_sig, opk.data);
-	packet_lock(&peer->state, buf, result);
+	p = enqueue_packet(ctx, peer);
+	size = ident_keyreq_rep_init(PACKET_TEXT(p->buf), hdr->msn,
+		value->spk, value->spk_sig, opk.data);
+	packet_lock(&peer->state, p->buf, size);
+	p->size = PACKET_BUF_SIZE(size);
 
 	print_table(ctx->table);
-	/* print_nametable(ctx->namestable); */
-
-	return result;
 }
 
 
@@ -483,7 +540,6 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nre
 	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
-	/* struct msg_fetch_msg *msg = (struct msg_fetch_msg *)text; */
 	int msgcount = 0;
 	ptrdiff_t arrlen;
 	/* uint16_t slack; */
@@ -507,7 +563,8 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, uint8_t *buf, size_t nre
 	/* for now, fetch only 1 message at a time */
 	arrlen = stbds_arrlen(kv->value.letterbox);
 	if (arrlen == 0)
-		errg("No messages to fetch.");
+		goto fail;
+
 	smsg = kv->value.letterbox[0];
 	stbds_arrdel(kv->value.letterbox, 0);
 	msgcount = 1;
@@ -543,10 +600,8 @@ serve(int argc, char **argv)
 	size_t nread;
 	uint8_t buf[65536];
 	const char *host, *port;
-	/* struct peertable peertable; */
-	/* struct userkv *table = NULL; */
-	/* struct usernamev *namestable = NULL; */
 	struct server_ctx ctx = {0};
+	struct pollfd pfds[] = {{0, POLLIN|POLLOUT, 0}};
 
 	if (argc < 2 || argc > 4)
 		usage();
@@ -554,10 +609,8 @@ serve(int argc, char **argv)
 	host = argc < 3? "127.0.0.1" : argv[2];
 	port = argc < 4? "3443" : argv[3];
 
-	if (peertable_init(&ctx.peertable)) {
-		fprintf(stderr, "Couldn't initialise peer table.\n");
-		exit(EXIT_FAILURE);
-	}
+	if (peertable_init(&ctx.peertable))
+		err(EXIT_FAILURE, "Couldn't initialise peer table.");
 
 	memset(buf, 0, 65536);
 	stbds_sh_new_arena(ctx.namestable);
@@ -568,10 +621,9 @@ serve(int argc, char **argv)
 	hints.ai_flags = AI_PASSIVE;
 
 	gai = getaddrinfo(host, port, &hints, &result);
-	if (gai != 0) {
-		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(gai));
-		exit(EXIT_FAILURE);
-	}
+	if (gai != 0)
+		(gai == EAI_SYSTEM ? err : errx)
+			(EXIT_FAILURE, "getaddrinfo: %s", gai_strerror(gai));
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
 		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
@@ -586,41 +638,87 @@ serve(int argc, char **argv)
 
 	freeaddrinfo(result);
 
-	if (rp == NULL) {
-		fprintf(stderr, "Couldn't bind to socket.\n");
-		exit(EXIT_FAILURE);
-	}
+	if (rp == NULL)
+		err(EXIT_FAILURE, "Couldn't bind to socket");
+
+	pfds[0].fd = fd;
 
 	for (;;) {
 		struct peer *peer;
 		struct peer_init pi = {0};
-		char host[NI_MAXHOST], service[NI_MAXSERV];
+		int pcount;
 
-		fprintf(stderr, "\n");
+		if (ctx.queue) pfds[0].events |= POLLOUT;
+		else           pfds[0].events &= ~POLLOUT;
+
+		pcount = poll(pfds, 1, -1);
+		if (!pcount)
+			continue;
+
+		if (pfds[0].revents & POLLOUT) {
+			struct queued_packet *p = dequeue_packet(&ctx);
+
+			/* fprintf(stderr, "Dequeued a packet to send of size %lu\n", */
+			/* 	p->size); */
+			/* peer_getnameinfo(p->peer); */
+			/* fprintf(stderr, "Packet is for peer %s on port %s\n", */
+			/* 	p->peer->host, p->peer->service); */
+
+			if (p) {
+				ssize_t result;
+
+				do result = sendto(fd, p->buf, p->size, MSG_DONTWAIT,
+					sstosa(&p->peer->addr), p->peer->addr_len);
+				while (result == -1 && errno == EINTR);
+
+				if (result == -1 && errno == EAGAIN) {
+					p->next = ctx.queue;
+					ctx.queue->prev = p;
+					ctx.queue = p;
+				} else if (result == -1) {
+					int errno_send = errno;
+					if (!peer_getnameinfo(p->peer)) {
+						errno = errno_send;
+						err(EXIT_FAILURE, "Could not send %lu-byte packet to peer %s on port %s",
+							p->size, p->peer->host, p->peer->service);
+					} else {
+						errno = errno_send;
+						err(EXIT_FAILURE, "Could not send %lu-byte packet (unknown host)", p->size);
+					}
+				} else {
+					crypto_wipe(p->buf, p->size);
+					fprintf(stderr, "Sent %lu-byte (%lu-byte) message.\n",
+						PACKET_TEXT_SIZE(p->size), p->size);
+					p->next = ctx.unused;
+					if (ctx.unused)
+						ctx.unused->prev = p;
+					ctx.unused = p;
+				}
+			}
+		}
+
+		if (!(pfds[0].revents & POLLIN))
+			continue;
 
 		pi.addr_len = sizeof(pi.addr);
-		nread = safe_recvfrom(fd, buf, 65536,
+		nread = safe_recvfrom_nonblock(fd, buf, 65536,
 			&pi.addr, &pi.addr_len);
 
-		fprintf(stderr, "Received %zu bytes.\n", nread);
-
-		if (!getnameinfo(sstosa(&pi.addr), pi.addr_len,
-				host, NI_MAXHOST,
-				service, NI_MAXSERV,
-				NI_NUMERICHOST|NI_NUMERICSERV)) {
-			fprintf(stderr, "Peer %s on port %s. ",
-				host, service);
-		} else fprintf(stderr, "Peer on unknown host and port. ");
+		fprintf(stderr, "Received %zu bytes. ", nread);
 
 		peer = peer_getbyaddr(&ctx.peertable, sstosa(&pi.addr), pi.addr_len);
 		if (peer == NULL) {
 			fprintf(stderr, "Peer not found. ");
 			peer = peer_add(&ctx.peertable, &pi);
-			if (peer == NULL) {
-				fprintf(stderr, "Failed to add peer to peertable.\n");
-				abort();
-			}
+			if (peer == NULL)
+				errx(EXIT_FAILURE, "Failed to add peer to peertable.");
 		} else fprintf(stderr, "Peer in table. ");
+
+		if (peer_getnameinfo(peer))
+			fprintf(stderr, "Peer on unknown host and port. ");
+		else
+			fprintf(stderr, "Peer %s on port %s. ",
+				peer->host, peer->service);
 
 		fprintf(stderr, "Peer status: %d\n", peer->status);
 
@@ -677,17 +775,12 @@ serve(int argc, char **argv)
 			/* Fall through: check if it's a real message */
 		}
 
-		/* if (peer->status != PEER_ACTIVE) */
-		/* 	continue; */
-
-		fprintf(stderr, "nread: %lu\n", nread);
+		/* fprintf(stderr, "nread: %lu\n", nread); */
 
 		if (nread > PACKET_BUF_SIZE(0)) {
 			struct packethdr *hdr = PACKET_HDR(buf);
 			uint8_t *text = PACKET_TEXT(buf);
 			size_t size = PACKET_TEXT_SIZE(nread);
-
-			/* displaykey("buf", buf, nread); */
 
 			if (packet_unlock(&peer->state, buf, nread)) {
 				fprintf(stderr, "Couldn't decrypt message with size=%lu (text_size=%lu)\n",
@@ -695,51 +788,36 @@ serve(int argc, char **argv)
 				continue;
 			}
 
-			/* displaykey("buf (decrypted)", buf, nread); */
-			/* displaykey("text", text, size); */
-
 			if (size >= sizeof(struct msg)) {
 				struct msg *msg = (struct msg *)text;
-				const char *name;
-				fprintf(stderr, "msg proto = %d\n", msg->proto);
-				fprintf(stderr, "msg type = %d\n", msg->type);
-				fprintf(stderr, "msg len = %d\n", load16_le(msg->len));
+				/* fprintf(stderr, "msg proto = %d\n", msg->proto); */
+				/* fprintf(stderr, "msg type = %d\n", msg->type); */
+				/* fprintf(stderr, "msg len = %d\n", load16_le(msg->len)); */
 				switch (msg->proto) {
 				case PROTO_IDENT:
 					switch (msg->type) {
 					case IDENT_REGISTER_MSG:
-						size = handle_register(&ctx, peer, buf, nread);
-						name = "registration ack";
+						handle_register(&ctx, peer, buf, nread);
 						break;
 					case IDENT_SPKSUB_MSG:
-						size = handle_spksub(&ctx, peer, buf, nread);
-						name = "spk submission ack";
+						handle_spksub(&ctx, peer, buf, nread);
 						break;
 					case IDENT_OPKSSUB_MSG:
-						size = handle_opkssub(&ctx, peer, buf, nread);
-						name = "opk submission ack";
+						handle_opkssub(&ctx, peer, buf, nread);
 						break;
 					case IDENT_LOOKUP_MSG:
-						size = handle_lookup(&ctx, peer, buf, nread);
-						name = "lookup reply";
+						handle_lookup(&ctx, peer, buf, nread);
 						break;
 					case IDENT_REVERSE_LOOKUP_MSG:
-						size = handle_reverse_lookup(&ctx, peer, buf, nread);
-						name = "reverse lookup reply";
+						handle_reverse_lookup(&ctx, peer, buf, nread);
 						break;
 					case IDENT_KEYREQ_MSG:
-						size = handle_keyreq(&ctx, peer, buf, nread);
-						name = "key request reply";
+						handle_keyreq(&ctx, peer, buf, nread);
 						break;
 					default:
 						fprintf(stderr, "fail\n");
 						abort();
 					}
-					safe_sendto(fd, buf, PACKET_BUF_SIZE(size),
-						sstosa(&pi.addr), pi.addr_len);
-					crypto_wipe(buf, PACKET_BUF_SIZE(size));
-					fprintf(stderr, "sent %lu-byte (%lu-byte) %s message\n",
-						size, PACKET_BUF_SIZE(size), name);
 					break;
 				case PROTO_MSG:
 					switch (msg->type) {
@@ -755,10 +833,8 @@ serve(int argc, char **argv)
 						struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
 						int result = 1;
 						uint16_t message_size;
-						uint8_t msn[4];
 						struct key isk;
 						struct userkv *kv;
-						struct stored_message smsg = {0};
 
 						if (size < MSG_FORWARD_MSG_BASE_SIZE) {
 							fprintf(stderr, "Message-forwarding message (%lu) is too small (%lu).\n",
@@ -770,6 +846,7 @@ serve(int argc, char **argv)
 							fprintf(stderr, "Message-forwarding messages with more than one message within not yet supported.\n");
 							goto forward_fail;
 						}
+
 						if (size < MSG_FORWARD_MSG_BASE_SIZE + 2) {
 							fprintf(stderr, "Message-forwarding message (%lu) is too small (%lu).\n",
 								size, MSG_FORWARD_MSG_BASE_SIZE + 2);
@@ -777,7 +854,6 @@ serve(int argc, char **argv)
 						}
 
 						message_size = load16_le(msg->messages);
-						fprintf(stderr, "message_size: %lu\n", message_size);
 						if (size < MSG_FORWARD_MSG_SIZE(2 + message_size)) {
 							fprintf(stderr, "Message-forwarding message (%lu) is the wrong size (%lu).\n",
 								size, MSG_FORWARD_MSG_SIZE(2 + message_size));
@@ -790,60 +866,51 @@ serve(int argc, char **argv)
 							goto forward_fail;
 						}
 
-						smsg.data = malloc(message_size);
-						if (smsg.data == NULL) {
-							fprintf(stderr, "Cannot allocate memory.\n");
-							goto forward_fail;
-						}
-							
 						result = 0;
 
-						memcpy(smsg.isk, peer->state.u.rad.iskc, 32);
-						memcpy(smsg.data, msg->messages + 2, message_size);
-						smsg.size = message_size;
-
-						memcpy(msn, hdr->msn, 4);
-						crypto_wipe(buf, nread);
-						
 						if (kv->value.peer == NULL) {
+							struct stored_message smsg = {0};
+
+							smsg.data = malloc(message_size);
+							if (smsg.data == NULL) {
+								fprintf(stderr, "Cannot allocate memory.\n");
+								result = 1;
+								goto forward_fail;
+							}
+
+							memcpy(smsg.isk, peer->state.u.rad.iskc, 32);
+							memcpy(smsg.data, msg->messages + 2, message_size);
+							smsg.size = message_size;
+
+							crypto_wipe(buf, nread);
+
 							stbds_arrpush(kv->value.letterbox, smsg);
 						} else {
-							struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)PACKET_TEXT(buf);
-							struct msg_fetch_content_msg *innermsg = (struct msg_fetch_content_msg *)msg->messages;
+							struct queued_packet *p = enqueue_packet(&ctx, kv->value.peer);
+							struct msg_fetch_reply_msg *repmsg = (struct msg_fetch_reply_msg *)PACKET_TEXT(p->buf);
+							struct msg_fetch_content_msg *innermsg = (struct msg_fetch_content_msg *)repmsg->messages;
 							size_t repsize, totalmsglength;
 
-							totalmsglength = smsg.size + 34;
-							repsize = msg_fetch_rep_init(PACKET_TEXT(buf), hdr->msn, 1, totalmsglength);
-							msg->msg.type = MSG_IMMEDIATE;
+							totalmsglength = message_size + 34;
+							repsize = msg_fetch_rep_init(PACKET_TEXT(p->buf), hdr->msn, 1, totalmsglength);
+							repmsg->msg.type = MSG_IMMEDIATE;
 
-							store16_le(innermsg->len, smsg.size);
-							memcpy(innermsg->isk,  smsg.isk,  32);
-							memcpy(innermsg->text, smsg.data, smsg.size);
+							store16_le(innermsg->len, message_size);
+							memcpy(innermsg->isk,  peer->state.u.rad.iskc, 32);
+							memcpy(innermsg->text, msg->messages + 2, message_size);
 
-							free(smsg.data);
-
-							packet_lock(&kv->value.peer->state, buf, repsize);
-							safe_sendto(fd, buf, PACKET_BUF_SIZE(repsize),
-								sstosa(&kv->value.peer->addr), kv->value.peer->addr_len);
-							crypto_wipe(buf, PACKET_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) immediate-forwarding message\n",
-								repsize, PACKET_BUF_SIZE(repsize));
-
+							packet_lock(&kv->value.peer->state, p->buf, repsize);
+							p->size = PACKET_BUF_SIZE(repsize);
 						}
 					forward_fail:
 
 						{
-							size_t repsize = msg_forward_ack_init(PACKET_TEXT(buf), msn, result);
-							packet_lock(&peer->state, buf, repsize);
-							safe_sendto(fd, buf, PACKET_BUF_SIZE(repsize),
-								sstosa(&pi.addr), pi.addr_len);
-							crypto_wipe(buf, PACKET_BUF_SIZE(repsize));
-							fprintf(stderr, "sent %lu-byte (%lu-byte) message-forwarding ack\n",
-								repsize, PACKET_BUF_SIZE(repsize));
+							struct queued_packet *p = enqueue_packet(&ctx, peer);
+							size_t repsize = msg_forward_ack_init(PACKET_TEXT(p->buf), hdr->msn, result);
+							packet_lock(&peer->state, p->buf, repsize);
+							p->size = PACKET_BUF_SIZE(repsize);
 						}
 
-						/* print_table(ctx.table); */
-						/* print_nametable(ctx.namestable); */
 						break;
 					}
 					default:
