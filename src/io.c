@@ -83,7 +83,7 @@ safe_read(int fd, uint8_t *buf, size_t max_size_p1)
 	do nread = read(fd, buf, max_size_p1);
 	while (nread == -1 && errno == EINTR);
 
-	if (nread == -1)
+	if (nread == -1 && errno != EAGAIN)
 		err(EXIT_FAILURE, "Could not read from socket");
 	if ((size_t)nread == max_size_p1) {
 		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
@@ -142,8 +142,29 @@ safe_recvfrom(int fd, uint8_t *buf, size_t max_size_p1,
 	ssize_t nread;
 
 	do {
-		*peeraddr_len = sizeof(peeraddr);
+		*peeraddr_len = sizeof(struct sockaddr_storage);
 		nread = recvfrom(fd, buf, max_size_p1, 0,
+			sstosa(peeraddr), peeraddr_len);
+	} while (nread == -1 && errno == EINTR);
+
+
+	if (nread == -1)
+		err(EXIT_FAILURE, "Could not read from socket.");
+	if ((size_t)nread == max_size_p1)
+		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
+
+	return nread;
+}
+
+size_t
+safe_recvfrom_nonblock(int fd, uint8_t *buf, size_t max_size_p1,
+		struct sockaddr_storage *peeraddr, socklen_t *peeraddr_len)
+{
+	ssize_t nread;
+
+	do {
+		*peeraddr_len = sizeof(struct sockaddr_storage);
+		nread = recvfrom(fd, buf, max_size_p1, MSG_DONTWAIT,
 			sstosa(peeraddr), peeraddr_len);
 	} while (nread == -1 && errno == EINTR);
 
@@ -180,16 +201,9 @@ safe_sendto(int fd, const uint8_t *buf, size_t size, struct sockaddr *peeraddr, 
 {
 	ssize_t result;
 
-	result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
-	while (result == -1 || (size_t)result < size) {
-		if (result == -1 && errno == EINTR) {
-			result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
-			continue;
-		}
-		if (result == -1)
-			err(EXIT_FAILURE, "Could not write to socket.");
-		buf += result;
-		size -= result;
-		result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
-	}
+	do result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
+	while (result == -1 && errno == EINTR);
+
+	if (result == -1)
+		err(EXIT_FAILURE, "Could not write to socket.");
 }
