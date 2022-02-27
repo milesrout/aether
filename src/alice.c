@@ -109,7 +109,7 @@ alice(int argc, char **argv)
 	if (nread < PACKET_BUF_SIZE(0))
 		errg("Received a message that is too small.");
 	if (packet_unlock(&state, buf, nread))
-		errg("Message cannot be decrypted.");
+		errg("Lookup message cannot be decrypted.");
 
 	{
 		struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)PACKET_TEXT(buf);
@@ -135,9 +135,8 @@ alice(int argc, char **argv)
 	nread = safe_read(fd, buf, 65536);
 	if (nread < PACKET_BUF_SIZE(0))
 		errg("Received a message that is too small.");
-
 	if (packet_unlock(&state, buf, nread))
-		errg("Message cannot be decrypted.");
+		errg("Keyreq message cannot be decrypted.");
 
 	{
 		struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)PACKET_TEXT(buf);

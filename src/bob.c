@@ -67,7 +67,7 @@ handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int
 			errg("Received a message that is too small.");
 
 		if (packet_unlock(state, buf, nread))
-			errg("Message cannot be decrypted.");
+			errg("handle_ident_replies: Message cannot be decrypted.");
 
 		if (size >= 1) {
 			struct msg *msg = (struct msg *)text;
