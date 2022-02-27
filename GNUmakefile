@@ -1,5 +1,9 @@
 ifeq ($(BUILD),release)
-	CFLAGS += -O3 -s -D_FORTIFY_SOURCE=2 -DNDEBUG -march=native
+	CFLAGS += -Os -s -D_FORTIFY_SOURCE=2 -DNDEBUG -march=native
+else ifeq ($(BUILD),musl)
+	CFLAGS += -Os -s -D_FORTIFY_SOURCE=2 -DNDEBUG -march=native -static
+	LDFLAGS += -static
+	CC = musl-gcc
 else ifeq ($(BUILD),valgrind)
 	CFLAGS += -Og -g
 else ifeq ($(BUILD),sanitise)
@@ -54,7 +58,7 @@ CFLAGS    += -ftrapv -fno-strict-aliasing -fno-delete-null-pointer-checks
 CFLAGSNW  := $(CFLAGS)
 CFLAGS    += $(WARNINGS)
 
-LDFLAGS   += -pie -fPIE
+LDFLAGS   += -pie -fPIE -flto
 LDLIBS    += -lm
 
 VALGRIND_FLAGS += -s --show-leak-kinds=all --leak-check=full --track-origins=yes
@@ -96,10 +100,10 @@ tags: $(SRCS)
 
 .PHONY: clean cleanall syntastic debug release valgrind sanitise
 clean:
-	$(RM) build/$(TARGET) $(OBJS) $(DEPS)
+	$(RM) build/$(BUILD)/$(TARGET) $(OBJS) $(DEPS)
 
 cleanall: clean
-	$(RM) -r build/{debug,release,valgrind,sanitise,gdb}/*
+	$(RM) -r build/{debug,release,musl,valgrind,sanitise,gdb}/*
 
 syntastic:
 	echo $(CFLAGS) | tr ' ' '\n' | sort | grep -v "MMD\|MP" | \
@@ -109,6 +113,10 @@ syntastic:
 release:
 	-$(MAKE) "BUILD=release"
 	./build/release/$(TARGET)
+
+musl:
+	-$(MAKE) "BUILD=musl"
+	./build/musl/$(TARGET)
 
 valgrind:
 	-$(MAKE) "BUILD=valgrind"

@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 
 #include "monocypher.h"
 #define STBDS_NO_SHORT_NAMES
