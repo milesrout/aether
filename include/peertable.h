@@ -18,6 +18,8 @@ struct peer {
 	int                     status;
 	struct sockaddr_storage addr;
 	socklen_t               addr_len;
+	char                    host[NI_MAXHOST];
+	char                    service[NI_MAXSERV];
 	uint64_t		hash;
 	struct packet_state     state;
 };
@@ -41,3 +43,4 @@ extern void peertable_finish(struct peertable *);
 extern struct peer *peer_add(struct peertable *, const struct peer_init *);
 extern struct peer *peer_getbyaddr(struct peertable *, const struct sockaddr *, socklen_t);
 extern int peer_del(struct peertable *, struct peer *);
+extern int peer_getnameinfo(struct peer *);

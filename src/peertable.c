@@ -25,6 +25,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "err.h"
 #include "util.h"
 #include "packet.h"
 #include "peertable.h"
@@ -129,6 +130,8 @@ peer_add(struct peertable *pt, const struct peer_init *pi)
 	memcpy(&peer->addr, &pi->addr, pi->addr_len);
 	peer->addr_len = pi->addr_len;
 	peer->status = PEER_NEW;
+	memset(peer->host, 0, NI_MAXHOST);
+	memset(peer->service, 0, NI_MAXSERV);
 	memset(&peer->state, 0, sizeof peer->state);
 	peer->hash = hash_peeraddr((const struct sockaddr *)&pi->addr, pi->addr_len);
 	idx = peer->hash % pt->cap;
@@ -184,4 +187,25 @@ peer_del(struct peertable *pt, struct peer *p)
 	}
 
 	return -1;
+}
+
+int
+peer_getnameinfo(struct peer *p)
+{
+	int gai;
+
+	if (p->host[0])
+		return 0;
+
+	gai = getnameinfo((struct sockaddr *)&p->addr, p->addr_len,
+		p->host, NI_MAXHOST,
+		p->service, NI_MAXSERV,
+		NI_NUMERICHOST|NI_NUMERICSERV);
+	if (gai == EAI_SYSTEM) {
+		warn("getnameinfo: %s", gai_strerror(gai));
+	} else if (gai) {
+		warnx("getnameinfo: %s", gai_strerror(gai));
+	}
+
+	return gai != 0 ? -1 : 0;
 }
