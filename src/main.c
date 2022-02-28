@@ -44,6 +44,7 @@
 #include "messaging.h"
 #include "io.h"
 #include "main.h"
+#include "fibre.h"
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
@@ -612,6 +613,8 @@ serve(int argc, char **argv)
 	if (peertable_init(&ctx.peertable))
 		err(EXIT_FAILURE, "Couldn't initialise peer table.");
 
+	fibre_init(4096 * 256);
+
 	memset(buf, 0, 65536);
 	stbds_sh_new_arena(ctx.namestable);
 
@@ -980,6 +983,50 @@ keygen(int argc, char **argv)
 	displaykey_short("prv", prv, 32);
 }
 
+static int counter;
+
+static
+void
+test_fibre(void *unused)
+{
+	static int i;
+	int j = (int)unused;
+	struct timespec ts = {0};
+
+
+	(void)unused;
+
+	fprintf(stderr, "Hello from %d %d (%d)\n", j, fibre_current(), i);
+	if (++i < 3) {
+		fprintf(stderr, "Sleep1 from %d %d (%d)!\n", j, fibre_current(), i);
+		ts.tv_sec = 1;
+		fibre_sleep(&ts);
+		fprintf(stderr, "Go1 from %d %d (%d)!\n", j, fibre_current(), i);
+		fibre_go(test_fibre, (void *)(counter++));
+		fprintf(stderr, "Sleep2 from %d %d (%d)!\n", j, fibre_current(), i);
+		ts.tv_sec = 2;
+		fibre_sleep(&ts);
+		fprintf(stderr, "Go2 from %d %d (%d)!\n", j, fibre_current(), i);
+		fibre_go(test_fibre, (void *)(counter++));
+	}
+	fprintf(stderr, "Goodbye from %d %d (%d)\n", j, fibre_current(), i);
+
+	/* while (fibre_yield()) */
+	/* 	fprintf(stderr, "Yielding from %d (%d)\n", fibre_current(), i); */
+	fibre_return();
+}
+
+static
+void
+fibre(int argc, char **argv)
+{
+	fibre_init(4 * 1024 * 1024);
+	fibre_go(test_fibre, (void *)(counter++));
+	while (fibre_yield())
+		;
+	fibre_return();
+}
+
 void
 usage(void)
 {
@@ -1002,12 +1049,13 @@ main(int argc, char **argv)
 	stbds_rand_seed(load64_le(seed));
 
 	switch (argv[1][0]) {
-		case 'k': keygen(argc, argv); break;
-		case 'p': proof(argc, argv); break;
 		case 'a': alice(argc, argv); break;
 		case 'b': bob(argc, argv); break;
 		case 'c': client(argc, argv); break;
 		case 'd': serve(argc, argv); break;
+		case 'f': fibre(argc, argv); break;
+		case 'k': keygen(argc, argv); break;
+		case 'p': proof(argc, argv); break;
 		default:  usage();
 	}
 

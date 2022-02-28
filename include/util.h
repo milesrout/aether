@@ -40,3 +40,4 @@ extern int check_key(const uint8_t isk[32], const char name[4],
 	const uint8_t key[32], const uint8_t sig[64]);
 extern size_t padme(size_t l);
 extern size_t floorlog2(size_t x);
+#define container_of(type, member, ptr) (type *)(void *)(((char *)(ptr)) - offsetof(type, member))
