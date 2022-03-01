@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <assert.h>
+#include <errno.h>
 #include <err.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -568,6 +569,7 @@ static
 void
 fibre_enqueue_ready(struct fibre *fibre)
 {
+	fibre->f_state = FS_READY;
 	fibre_store_list_enqueue(
 		&global_fibre_store.fs_lists[fibre->f_prio],
 		fibre);
@@ -577,12 +579,13 @@ static
 void
 fibre_enqueue_waiting(struct fibre *fibre)
 {
+	fibre->f_state = FS_WAITING;
 	fibre_store_list_enqueue(
 		&global_fibre_store.fs_lists[FL_HIGH_WAITING + fibre->f_prio],
 		fibre);
 }
 
-static int fibre_yield_impl(int plain);
+static int fibre_yield_impl(int should_wait);
 
 int
 fibre_sleep(const struct timespec *duration)
@@ -602,50 +605,73 @@ fibre_sleep(const struct timespec *duration)
 	if (res == -1)
 		err(EXIT_FAILURE, "Could not set timer");
 
-	current_fibre->f_fd = fd;
-	current_fibre->f_poll = POLLIN;
-	current_fibre->f_state = FS_WAITING;
-	fibre_enqueue_waiting(current_fibre);
-	result = fibre_yield_impl(0);
+	result = fibre_wait_for_fd(fd, POLLIN);
 
-	{
-		int res;
+	res = close(fd);
+	if (res == -1)
+		err(EXIT_FAILURE, "Could not close");
 
-		res = close(fd);
-		if (res == -1)
-			err(EXIT_FAILURE, "Could not close");
+	return result;
+}
 
-		return res;
+int
+fibre_read(int fd, void *buf, size_t count)
+{
+	/* assume that fd was opened as non-blocking */
+	ssize_t nread;
+
+	goto midloop;
+	while ((nread == -1 && errno == EAGAIN) || (nread > 0 && (size_t)nread < count)) {
+		if (nread != -1) {
+			count -= nread;
+			buf = (char *)buf + nread;
+		}
+		fibre_wait_for_fd(fd, POLLIN);
+	midloop:
+		nread = read(fd, buf, count);
+		fprintf(stderr, "fd=%d buf=%p count=%lu nread=%ld\n",
+			fd, buf, count, nread);
 	}
+
+	return nread;
+}
+
+int
+fibre_wait_for_fd(int fd, int events)
+{
+	current_fibre->f_fd = fd;
+	current_fibre->f_poll = events;
+	return fibre_yield_impl(1);
 }
 
 int
 fibre_yield(void)
 {
-	return fibre_yield_impl(1);
+	return fibre_yield_impl(0);
 }
 
 static
 int
-fibre_yield_impl(int plain)
+fibre_yield_impl(int should_wait)
 {
 	struct fibre_ctx *old, *new;
 	struct fibre *old_fibre;
 	struct fibre *fibre = fibre_store_get_next_ready(&global_fibre_store, 0);
 
 	if (fibre == NULL) {
-		/* fprintf(stderr, "Yielding from fibre %p, finishing\n", */
-		/*                    (void *)current_fibre); */
 		fibre = fibre_store_get_next_ready(&global_fibre_store, -1);
-		if (fibre == NULL)
+		if (fibre == NULL) {
+			/* fprintf(stderr, "Yielding from fibre %p, finishing\n", */
+			/*                    (void *)current_fibre); */
 			return 0;
+		}
 	}
 
-	if (plain) {
-		if (current_fibre->f_state != FS_EMPTY) {
-			current_fibre->f_state = FS_READY;
+	if (current_fibre->f_state != FS_EMPTY) {
+		if (should_wait)
+			fibre_enqueue_waiting(current_fibre);
+		else
 			fibre_enqueue_ready(current_fibre);
-		}
 	}
 	fibre->f_state = FS_ACTIVE;
 	old = &current_fibre->f_ctx;

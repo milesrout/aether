@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -48,6 +49,8 @@
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
+
+#define STACK_SIZE (256 * 1024)
 
 const char *progname;
 
@@ -983,47 +986,66 @@ keygen(int argc, char **argv)
 	displaykey_short("prv", prv, 32);
 }
 
-static int counter;
+static intptr_t counter;
 
 static
 void
-test_fibre(void *unused)
+test_fibre(void *_counter)
 {
 	static int i;
-	int j = (int)unused;
+	intptr_t j = (intptr_t)_counter;
 	struct timespec ts = {0};
 
+	fprintf(stderr, "Hello from %ld %d (%d)\n", j, fibre_current(), i);
+	if (++i < 3) {
+		/* fprintf(stderr, "Sleep1 from %ld %d (%d)!\n", j, fibre_current(), i); */
+		/* ts.tv_sec = 1; */
+		/* fibre_sleep(&ts); */
+		fprintf(stderr, "Go1 from %ld %d (%d)!\n", j, fibre_current(), i);
+		fibre_go(test_fibre, (void *)(counter++));
+		fprintf(stderr, "Sleep2 from %ld %d (%d)!\n", j, fibre_current(), i);
+		ts.tv_sec = 2;
+		fibre_sleep(&ts);
+		fprintf(stderr, "Go2 from %ld %d (%d)!\n", j, fibre_current(), i);
+		fibre_go(test_fibre, (void *)(counter++));
+	}
+	fprintf(stderr, "Goodbye from %ld %d (%d)\n", j, fibre_current(), i);
+	fibre_return();
+}
+
+static
+void
+test_fibre2(void *unused)
+{
+	int fd;
+	ssize_t nread;
+	char buf[256] = {0};
 
 	(void)unused;
 
-	fprintf(stderr, "Hello from %d %d (%d)\n", j, fibre_current(), i);
-	if (++i < 3) {
-		fprintf(stderr, "Sleep1 from %d %d (%d)!\n", j, fibre_current(), i);
-		ts.tv_sec = 1;
-		fibre_sleep(&ts);
-		fprintf(stderr, "Go1 from %d %d (%d)!\n", j, fibre_current(), i);
-		fibre_go(test_fibre, (void *)(counter++));
-		fprintf(stderr, "Sleep2 from %d %d (%d)!\n", j, fibre_current(), i);
-		ts.tv_sec = 2;
-		fibre_sleep(&ts);
-		fprintf(stderr, "Go2 from %d %d (%d)!\n", j, fibre_current(), i);
-		fibre_go(test_fibre, (void *)(counter++));
-	}
-	fprintf(stderr, "Goodbye from %d %d (%d)\n", j, fibre_current(), i);
+	fd = open("example.txt", O_RDWR|O_NONBLOCK);
+	if (fd == -1)
+		err(EXIT_FAILURE, "Could not open `%s'", "example.txt");
 
-	/* while (fibre_yield()) */
-	/* 	fprintf(stderr, "Yielding from %d (%d)\n", fibre_current(), i); */
-	fibre_return();
+	do nread = fibre_read(fd, buf, 255);
+	while (nread == -1 && errno == EINTR);
+	if (nread == -1)
+		err(EXIT_FAILURE, "Could not read from `%s'", "example.txt");
+
+	displaykey("buf", (void *)buf, 256);
 }
 
 static
 void
 fibre(int argc, char **argv)
 {
-	fibre_init(4 * 1024 * 1024);
+	(void)argc;
+	(void)argv;
+
+	fibre_init(STACK_SIZE);
 	fibre_go(test_fibre, (void *)(counter++));
-	while (fibre_yield())
-		;
+	fibre_go(test_fibre2, NULL);
+	while (fibre_yield());
 	fibre_return();
 }
 
