@@ -8,8 +8,13 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/timerfd.h>
+#include <sys/syscall.h>
+#include <linux/userfaultfd.h>
+#include <pthread.h>
+#include <semaphore.h>
 
 #include "err.h"
 #include "util.h"
@@ -454,6 +459,111 @@ fibre_current(void)
 	return current_fibre->f_id;
 }
 
+static
+int
+userfaultfd(int flags)
+{
+	return syscall(SYS_userfaultfd, flags);
+}
+
+static
+void *
+do_thing(void *map);
+
+static sem_t sem;
+
+static
+void
+init_other_stuff(void)
+{
+	int fd, res;
+	struct pollfd pfd;
+	void *map, *result;
+	struct uffdio_api ufapi;
+	struct uffdio_register ufreg;
+	struct uffd_msg ufmsg;
+	struct uffdio_zeropage ufzp;
+	pthread_t tid;
+	pthread_attr_t attrs;
+
+	fd = userfaultfd(O_NONBLOCK);
+	if (fd == -1)
+		err(EXIT_FAILURE, "userfaultfd");
+
+	ufapi.api=UFFD_API;
+	ufapi.features=UFFD_FEATURE_THREAD_ID;
+	if (ioctl(fd, UFFDIO_API, &ufapi))
+		err(EXIT_FAILURE, "ioctl(UFFDIO_API)");
+
+	map = mmap((void *)(1UL << 32), (1UL << 24),
+		PROT_READ|PROT_WRITE,
+		MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE,
+		-1, 0);
+	if (map == MAP_FAILED)
+		err(EXIT_FAILURE, "mmap");
+
+	if (sem_init(&sem, 0, 0))
+		err(EXIT_FAILURE, "sem_init");
+	if (pthread_attr_init(&attrs))
+		err(EXIT_FAILURE, "pthread_attr_init");
+	if (pthread_attr_setstack(&attrs, map, 256 * 4096))
+		err(EXIT_FAILURE, "pthread_attr_setstack");
+	if (pthread_create(&tid, &attrs, do_thing, map))
+		err(EXIT_FAILURE, "pthread_create");
+
+	ufreg.range.start=(1UL << 32);
+	ufreg.range.len=(1UL << 24);
+	ufreg.mode=UFFDIO_REGISTER_MODE_MISSING;
+	if (ioctl(fd, UFFDIO_REGISTER, &ufreg))
+		err(EXIT_FAILURE, "Could not register [%lu,%lu)",
+			(1UL << 32), (1UL << 32) + (1UL << 24));
+
+	if (sem_post(&sem))
+		err(EXIT_FAILURE, "sem_post");
+
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+
+	res = poll(&pfd, 1, -1);
+	if (res == -1)
+		err(EXIT_FAILURE, "Could not poll");
+
+	if (!(pfd.revents & POLLIN))
+		err(EXIT_FAILURE, "Did not get a fault for some reason");
+
+	read(fd, &ufmsg, sizeof(struct uffd_msg));
+	if (!(ufmsg.event & UFFD_EVENT_PAGEFAULT))
+		errx(EXIT_FAILURE, "Wrong type of userfaultfd event");
+
+	fprintf(stderr, "address = %p\n",
+		(void *)ufmsg.arg.pagefault.address);
+	fprintf(stderr, "ptid = %u (expected %lu)\n",
+		ufmsg.arg.pagefault.feat.ptid, tid);
+	fprintf(stderr, "write? = %d\n",
+		!!(ufmsg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WRITE));
+	fprintf(stderr, "wp? = %d\n",
+		!!(ufmsg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP));
+
+	ufzp.range.start = 1UL << 32;
+	ufzp.range.len = 1UL << 24;
+	ufzp.mode = 0;
+	ioctl(fd, UFFDIO_ZEROPAGE, &ufzp);
+
+	if (pthread_join(tid, &result))
+		err(EXIT_FAILURE, "pthread_join");
+	fprintf(stderr, "result=%lu\n", (uint64_t)result);
+}
+
+static
+void *
+do_thing(void *map)
+{
+	if (sem_wait(&sem))
+		err(EXIT_FAILURE, "sem_wait");
+	*(unsigned char *)map = 0xff;
+	return (void *)(uintptr_t)*(unsigned char *)map;
+}
+
 void
 fibre_init(size_t stack_size)
 {
@@ -490,6 +600,8 @@ fibre_init(size_t stack_size)
 	main_fibre->f_stack = NULL;
 
 	current_fibre = main_fibre;
+
+	init_other_stuff();
 }
 
 /* This should be further up, but the assertion requires it to be after the
@@ -608,15 +720,11 @@ fibre_sleep(const struct timespec *duration)
 	fibre_enqueue_waiting(current_fibre);
 	result = fibre_yield_impl(0);
 
-	{
-		int res;
+	res = close(current_fibre->f_fd);
+	if (res == -1)
+		err(EXIT_FAILURE, "Could not close");
 
-		res = close(fd);
-		if (res == -1)
-			err(EXIT_FAILURE, "Could not close");
-
-		return res;
-	}
+	return res;
 }
 
 int
