@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "err.h"
+#include "fibre.h"
 #include "io.h"
 
 int
@@ -80,7 +81,7 @@ safe_read(int fd, uint8_t *buf, size_t max_size_p1)
 {
 	ssize_t nread;
 
-	do nread = read(fd, buf, max_size_p1);
+	do nread = fibre_read(fd, buf, max_size_p1);
 	while (nread == -1 && errno == EINTR);
 
 	if (nread == -1 && errno != EAGAIN)
@@ -143,7 +144,7 @@ safe_recvfrom(int fd, uint8_t *buf, size_t max_size_p1,
 
 	do {
 		*peeraddr_len = sizeof(struct sockaddr_storage);
-		nread = recvfrom(fd, buf, max_size_p1, 0,
+		nread = fibre_recvfrom(fd, buf, max_size_p1, 0,
 			sstosa(peeraddr), peeraddr_len);
 	} while (nread == -1 && errno == EINTR);
 
@@ -164,10 +165,9 @@ safe_recvfrom_nonblock(int fd, uint8_t *buf, size_t max_size_p1,
 
 	do {
 		*peeraddr_len = sizeof(struct sockaddr_storage);
-		nread = recvfrom(fd, buf, max_size_p1, MSG_DONTWAIT,
+		nread = fibre_recvfrom(fd, buf, max_size_p1, MSG_DONTWAIT,
 			sstosa(peeraddr), peeraddr_len);
 	} while (nread == -1 && errno == EINTR);
-
 
 	if (nread == -1)
 		err(EXIT_FAILURE, "Could not read from socket.");
@@ -182,26 +182,34 @@ safe_write(int fd, const uint8_t *buf, size_t size)
 {
 	ssize_t result;
 
-	result = write(fd, buf, size);
-	while (result == -1 || (size_t)result < size) {
-		if (result == -1 && errno == EINTR) {
-			result = write(fd, buf, size);
-			continue;
-		}
-		if (result == -1)
-			err(EXIT_FAILURE, "Could not write to socket.");
-		buf += result;
-		size -= result;
-		result = write(fd, buf, size);
-	}
+	do {
+		result = fibre_write(fd, buf, size);
+		fibre_yield();
+	} while (result == -1 && errno == EINTR);
+	if (result == -1)
+		err(EXIT_FAILURE, "Could not write to socket.");
 }
 
 void
-safe_sendto(int fd, const uint8_t *buf, size_t size, struct sockaddr *peeraddr, socklen_t peeraddr_len)
+safe_sendto(int fd, const uint8_t *buf, size_t size,
+		struct sockaddr *peeraddr, socklen_t peeraddr_len)
 {
 	ssize_t result;
 
-	do result = sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
+	do result = fibre_sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
+	while (result == -1 && errno == EINTR);
+
+	if (result == -1)
+		err(EXIT_FAILURE, "Could not write to socket.");
+}
+
+void
+safe_sendto_nonblock(int fd, const uint8_t *buf, size_t size,
+		struct sockaddr *peeraddr, socklen_t peeraddr_len)
+{
+	ssize_t result;
+
+	do result = fibre_sendto(fd, buf, size, MSG_DONTWAIT, peeraddr, peeraddr_len);
 	while (result == -1 && errno == EINTR);
 
 	if (result == -1)

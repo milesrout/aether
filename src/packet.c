@@ -534,16 +534,12 @@ hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 void
 packet_lock(struct packet_state *state, uint8_t *buf, size_t text_size)
 {
-	/* fprintf(stderr, "\nEncrypting message with size %lu (%lu)\n", */
-	/* 	text_size, PACKET_BUF_SIZE(text_size)); */
 	encrypt_message(&state->u.ra.rac, (struct packet *)buf, text_size);
 }
 
 int
 packet_unlock(struct packet_state *state, uint8_t *buf, size_t buf_size)
 {
-	/* fprintf(stderr, "\nTrying to decrypt message with size %lu (%lu)\n", */
-	/* 	PACKET_TEXT_SIZE(buf_size), buf_size); */
 	return try_decrypt_message(&state->u.ra.rac,
 		(struct packet *)buf, buf_size - sizeof(struct packet));
 }
@@ -662,12 +658,6 @@ packet_hshake_bprepare(struct packet_state *state,
 	uint8_t dh[128];
 
 	crypto_wipe(state, sizeof *state);
-
-	displaykey("spkb.prv", spkb_prv, 32);
-	displaykey("ikb.prv",  ikb_prv,  32);
-	displaykey("opkb.prv", opkb_prv, 32);
-	displaykey("ika",      ika,      32);
-	displaykey("eka",      eka,      32);
 
 	crypto_x25519(dh,      spkb_prv, ika);
 	crypto_x25519(dh + 32, ikb_prv,  eka);
@@ -983,7 +973,6 @@ send_message(struct packet_state *state, struct packet_state *p2pstate,
 		uint8_t recipient_isk[32], uint8_t *buf,
 		const uint8_t *text, size_t text_size)
 {
-	/* fprintf(stderr, "prerecv? %d\n", p2pstate->u.ra.rac.prerecv); */
 	return (p2pstate->u.ra.rac.prerecv ? send_ohello_message : send_omsg_message)
 		(state, p2pstate, recipient_isk, buf, text, text_size);
 }

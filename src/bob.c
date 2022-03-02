@@ -73,10 +73,6 @@ handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int
 			struct msg *msg = (struct msg *)text;
 
 			minreplies--;
-
-			fprintf(stderr, "msg (proto,type,len) = (%d,%d,%d)\n",
-				msg->proto, msg->type, load16_le(msg->len));
-
 			if (msg->proto != PROTO_IDENT)
 				continue;
 
@@ -86,8 +82,6 @@ handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int
 				if (size < sizeof *msg)
 					errg("OPKs submission ack message is the wrong size.");
 				fprintf(stderr, "OPKs submission ack\n");
-				fprintf(stderr, "msn:\t%u\n", load32_le(msg->msn));
-				fprintf(stderr, "result:\t%d\n", msg->result);
 				if (msg->result)
 					goto fail;
 				break;
@@ -97,8 +91,6 @@ handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int
 				if (size < sizeof *msg)
 					errg("SPK submission ack message is the wrong size.");
 				fprintf(stderr, "SPK submission ack\n");
-				fprintf(stderr, "msn:\t%u\n", load32_le(msg->msn));
-				fprintf(stderr, "result:\t%d\n", msg->result);
 				if (msg->result)
 					goto fail;
 				break;
@@ -108,14 +100,14 @@ handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int
 				if (size < sizeof *msg)
 					errg("Registration ack message is the wrong size.");
 				fprintf(stderr, "Registration submission ack\n");
-				fprintf(stderr, "msn:\t%u\n", load32_le(msg->msn));
-				fprintf(stderr, "result:\t%d\n", msg->result);
 				if (msg->result)
 					goto fail;
 				break;
 			}
 			default:
 				fprintf(stderr, "Unrecognised message type %d\n", text[0]);
+				fprintf(stderr, "(proto,type,len) = (%d,%d,%d)\n",
+					msg->proto, msg->type, load16_le(msg->len));
 				displaykey("buf (decrypted)", buf, nread);
 				displaykey("text", text, size);
 				return -1;
@@ -538,7 +530,7 @@ register_identity(struct packet_state *state, struct ident_state *ident,
 	struct pollfd pfds[1] = {{fd, POLLIN, 0}};
 
 	while (regn_state < 3) {
-		fprintf(stderr, "regn_state: %u\n", regn_state);
+		/* fprintf(stderr, "regn_state: %u\n", regn_state); */
 		if (regn_state == 0)
 			size = ident_register_msg_init(ident, PACKET_TEXT(buf), name);
 		else if (regn_state == 1)
@@ -549,8 +541,9 @@ register_identity(struct packet_state *state, struct ident_state *ident,
 		packet_lock(state, buf, size);
 		safe_write(fd, buf, PACKET_BUF_SIZE(size));
 		crypto_wipe(buf, PACKET_BUF_SIZE(size));
-		fprintf(stderr, "sent %lu-byte (%lu-byte) message\n",
-			size, PACKET_BUF_SIZE(size));
+		fprintf(stderr, "sent %lu-byte (%lu-byte) %s message\n",
+			size, PACKET_BUF_SIZE(size),
+			regn_state == 0 ? "reg" : regn_state == 1 ? "spksub" : "opkssub");
 
 		pcount = poll(pfds, 1, 1000);
 

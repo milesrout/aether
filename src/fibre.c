@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/timerfd.h>
 
 #include "err.h"
@@ -29,6 +30,7 @@ static void *mmap_reallocate(void *q, size_t m, size_t n);
 static struct {
 	long int fstat_stack_allocs;
 	long int fstat_fibre_go_calls;
+	long int fstat_iocalls;
 } fibre_stats = {0};
 
 /*
@@ -95,14 +97,10 @@ struct fibre {
 	struct fibre_ctx f_ctx;
 	short f_state;
 	short f_prio;
-#ifdef BUILD_VALGRIND
 	unsigned f_valgrind_id;
-#else
-	unsigned reserved[1];
-#endif
 	int f_id;
 	int f_fd;
-	int f_poll;
+	short f_events;
 	char *f_stack;
 	void (*f_func)(void *);
 	void *f_data;
@@ -118,7 +116,7 @@ fibre_setup(struct fibre *fibre)
 	/* f_valgrind_id is initialised when needed */
 	/* f_id is invalid when f_state = EMPTY */
 	/* f_fd is valid only when f_state = WAITING */
-	/* f_poll is valid only when f_state = WAITING */
+	/* f_events is valid only when f_state = WAITING */
 	fibre->f_stack = NULL;
 	/* f_func is invalid when f_state = EMPTY */
 	/* f_data is invalid when f_state = EMPTY */
@@ -303,9 +301,6 @@ fibre_store_get_first_empty(struct fibre_store *store)
 	struct fibre_store_list *empties_list = &store->fs_lists[FL_EMPTY];
 	struct fibre_store_node *node;
 
-	/* count not used for list of empties */
-	/* assert(empties_list->fsl_count == 0); */
-
 	if (empties_list->fsl_start == NULL || empties_list->fsl_end == NULL) {
 		struct fibre_store_block *block;
 
@@ -351,7 +346,7 @@ fibre_store_poll(int timeout, struct fibre_store_list *ready, struct fibre_store
 
 	pfds = malloc(sizeof(struct pollfd) * waiting->fsl_count);
 	if (pfds == NULL)
-		err(EXIT_FAILURE, "Could not allocate poll fd array");
+		err(EXIT_FAILURE, "Could not allocate pollfd array");
 
 	for (i = 0, node = waiting->fsl_start;
 			node != NULL;
@@ -359,7 +354,7 @@ fibre_store_poll(int timeout, struct fibre_store_list *ready, struct fibre_store
 		assert(i < waiting->fsl_count);
 		assert(node != NULL);
 		pfds[i].fd = node->fsn_fibre.f_fd;
-		pfds[i].events = node->fsn_fibre.f_poll;
+		pfds[i].events = node->fsn_fibre.f_events;
 	}
 	assert(i == waiting->fsl_count);
 	assert(node == NULL);
@@ -425,11 +420,9 @@ fibre_store_get_next_ready(struct fibre_store *store, int timeout)
 	size_t i;
 
 	for (i = 0; i < FP_NUM_PRIOS; i++) {
-		if (store->fs_lists[FL_HIGH_WAITING + i].fsl_count &&
-				fibre_store_poll(timeout, &store->fs_lists[i],
-					&store->fs_lists[FL_HIGH_WAITING + i])) {
-			/* return try_fibre_store_list_dequeue(&store->fs_lists[i]); */
-		}
+		if (store->fs_lists[FL_HIGH_WAITING + i].fsl_count)
+			fibre_store_poll(timeout, &store->fs_lists[i],
+				&store->fs_lists[FL_HIGH_WAITING + i]);
 		if ((fibre = try_fibre_store_list_dequeue(&store->fs_lists[i])) != NULL)
 			return fibre;
 	}
@@ -526,6 +519,7 @@ fibre_finish(void)
 
 	warnx("Fibre stat stack_allocs: %ld", fibre_stats.fstat_stack_allocs);
 	warnx("Fibre stat fibre_go_calls: %ld", fibre_stats.fstat_fibre_go_calls);
+	warnx("Fibre stat iocalls: %ld", fibre_stats.fstat_iocalls);
 
 	fibre_store_destroy(&global_fibre_store);
 }
@@ -588,6 +582,50 @@ fibre_enqueue_waiting(struct fibre *fibre)
 static int fibre_yield_impl(int should_wait);
 
 int
+fibre_sleep_s(time_t seconds)
+{
+	struct timespec ts;
+
+	ts.tv_sec = seconds;
+	ts.tv_nsec = 0;
+
+	return fibre_sleep(&ts);
+}
+
+int
+fibre_sleep_ms(long milliseconds)
+{
+	struct timespec ts;
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = milliseconds * 1000000;
+
+	return fibre_sleep(&ts);
+}
+
+int
+fibre_sleep_us(long microseconds)
+{
+	struct timespec ts;
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = microseconds * 1000;
+
+	return fibre_sleep(&ts);
+}
+
+int
+fibre_sleep_ns(long nanoseconds)
+{
+	struct timespec ts;
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = nanoseconds;
+
+	return fibre_sleep(&ts);
+}
+
+int
 fibre_sleep(const struct timespec *duration)
 {
 	int fd, res, result;
@@ -605,7 +643,7 @@ fibre_sleep(const struct timespec *duration)
 	if (res == -1)
 		err(EXIT_FAILURE, "Could not set timer");
 
-	result = fibre_wait_for_fd(fd, POLLIN);
+	result = fibre_awaitfd(fd, POLLIN);
 
 	res = close(fd);
 	if (res == -1)
@@ -614,33 +652,75 @@ fibre_sleep(const struct timespec *duration)
 	return result;
 }
 
-int
+/* assume that fd was opened as non-blocking */
+ssize_t
 fibre_read(int fd, void *buf, size_t count)
 {
-	/* assume that fd was opened as non-blocking */
-	ssize_t nread;
+	ssize_t n;
 
-	goto midloop;
-	while ((nread == -1 && errno == EAGAIN) || (nread > 0 && (size_t)nread < count)) {
-		if (nread != -1) {
-			count -= nread;
-			buf = (char *)buf + nread;
-		}
-		fibre_wait_for_fd(fd, POLLIN);
-	midloop:
-		nread = read(fd, buf, count);
-		fprintf(stderr, "fd=%d buf=%p count=%lu nread=%ld\n",
-			fd, buf, count, nread);
+	fibre_stats.fstat_iocalls++;
+	n = read(fd, buf, count);
+	while (n == -1 && errno == EAGAIN) {
+		fibre_awaitfd(fd, POLLIN);
+		n = read(fd, buf, count);
 	}
 
-	return nread;
+	return n;
+}
+
+/* assume that fd was opened as non-blocking */
+ssize_t
+fibre_write(int fd, const void *buf, size_t count)
+{
+	ssize_t n;
+
+	fibre_stats.fstat_iocalls++;
+	n = write(fd, buf, count);
+	while (n == -1 && errno == EAGAIN) {
+		fibre_awaitfd(fd, POLLOUT);
+		n = write(fd, buf, count);
+	}
+
+	return n;
+}
+
+ssize_t
+fibre_recvfrom(int fd, void *buf, size_t len, int flags,
+		struct sockaddr *peeraddr, socklen_t *peeraddr_len)
+{
+	ssize_t n;
+
+	fibre_stats.fstat_iocalls++;
+	n = recvfrom(fd, buf, len, flags, peeraddr, peeraddr_len);
+	while (n == -1 && errno == EAGAIN) {
+		fibre_awaitfd(fd, POLLOUT);
+		n = recvfrom(fd, buf, len, flags, peeraddr, peeraddr_len);
+	}
+
+	return n;
+}
+
+ssize_t
+fibre_sendto(int fd, const void *buf, size_t len, int flags,
+		struct sockaddr *peeraddr, socklen_t peeraddr_len)
+{
+	ssize_t n;
+
+	fibre_stats.fstat_iocalls++;
+	n = sendto(fd, buf, len, flags, peeraddr, peeraddr_len);
+	while (n == -1 && errno == EAGAIN) {
+		fibre_awaitfd(fd, POLLOUT);
+		n = sendto(fd, buf, len, flags, peeraddr, peeraddr_len);
+	}
+
+	return n;
 }
 
 int
-fibre_wait_for_fd(int fd, int events)
+fibre_awaitfd(int fd, int events)
 {
 	current_fibre->f_fd = fd;
-	current_fibre->f_poll = events;
+	current_fibre->f_events = events;
 	return fibre_yield_impl(1);
 }
 
