@@ -66,85 +66,6 @@
 
 const char *progname;
 
-static
-int
-client(int argc, char **argv)
-{
-	/* TODO: discover through DNS or HTTPS or something */
-	/* uint8_t isks[32]; */
-	int fd;
-	uint8_t iskc[32], iskc_prv[32];
-	uint8_t ikc[32], ikc_prv[32];
-	struct packet_state state;
-	const char *host, *port;
-
-	if (argc < 2 || argc > 4)
-		usage();
-
-	host = argc < 3? "127.0.0.1" : argv[2];
-	port = argc < 4? "3443" : argv[3];
-
-	generate_sig_keypair(iskc, iskc_prv);
-	crypto_from_eddsa_public(ikc,      iskc);
-	crypto_from_eddsa_private(ikc_prv, iskc_prv);
-
-	fd = setclientup(host, port);
-	if (fd == -1)
-		exit(EXIT_FAILURE);
-
-	{
-		uint8_t buf[65536];
-		size_t nread;
-
-		packet_hshake_cprepare(&state, isks, iks, iskc, iskc_prv, ikc, ikc_prv);
-		packet_hshake_chello(&state, buf);
-		safe_write(fd, buf, PACKET_HELLO_SIZE);
-		crypto_wipe(buf, PACKET_HELLO_SIZE);
-
-		nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
-		if (nread != PACKET_REPLY_SIZE) {
-			fprintf(stderr, "Received the wrong message.\n");
-			crypto_wipe(buf, PACKET_REPLY_SIZE);
-			return -1;
-		}
-
-		if (packet_hshake_cfinish(&state, buf)) {
-			fprintf(stderr, "Reply message cannot be decrypted.\n");
-			crypto_wipe(buf, PACKET_REPLY_SIZE);
-			return -1;
-		}
-
-		crypto_wipe(buf, PACKET_REPLY_SIZE);
-
-		memset(PACKET_TEXT(buf), 0x77, 24);
-		packet_lock(&state, buf, 24);
-
-		safe_write(fd, buf, PACKET_BUF_SIZE(24));
-		crypto_wipe(buf, PACKET_BUF_SIZE(24));
-		fprintf(stderr, "sent 24-byte message\n");
-
-		nread = safe_read(fd, buf, 65536);
-
-		while (nread > PACKET_BUF_SIZE(1)) {
-			if (packet_unlock(&state, buf, nread)) {
-				break;
-			}
-
-			if (nread > PACKET_BUF_SIZE(1)) {
-				packet_lock(&state, buf, PACKET_TEXT_SIZE(nread) - 1);
-				safe_write(fd, buf, nread - 1);
-				fprintf(stderr, "sent %lu-byte message\n", PACKET_TEXT_SIZE(nread) - 1);
-			}
-
-			crypto_wipe(buf, 65536);
-
-			nread = safe_read(fd, buf, 65536);
-		}
-	}
-
-	exit(EXIT_FAILURE);
-}
-
 /* the following functions are "safe" in the sense that instead of returning an
  * error, they abort the program.  They are not safe in the sense that they
  * cannot produce errors or in the sense that they can be used with impunity.
@@ -1009,7 +930,7 @@ fibre(int argc, char **argv)
 void
 usage(void)
 {
-	fprintf(stderr, "usage: %s (k[eygen] | p[roof] | c[lient] HOST PORT | d[aemon) HOST PORT)\n",
+	fprintf(stderr, "usage: %s (k[eygen] | p[roof] | d[aemon) HOST PORT)\n",
 		progname);
 	exit(EXIT_FAILURE);
 }
@@ -1030,7 +951,6 @@ main(int argc, char **argv)
 	switch (argv[1][0]) {
 		case 'a': alice(argc, argv); break;
 		case 'b': bob(argc, argv); break;
-		case 'c': client(argc, argv); break;
 		case 'd': serve(argc, argv); break;
 		case 'f': fibre(argc, argv); break;
 		case 'k': keygen(argc, argv); break;
