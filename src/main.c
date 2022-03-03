@@ -51,7 +51,7 @@
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
 
-#define STACK_SIZE (256 * 1024)
+#define STACK_SIZE (128 * 1024)
 
 /* A note on terminology.
  *
@@ -111,11 +111,11 @@ print_nametable(struct usernamev *table)
 	struct usernamev *el;
 
 	len = stbds_shlen(table);
-	fprintf(stderr, "table length = %ld\n", len);
+	printf("table length = %ld\n", len);
 
 	for (i = 0; i < len; i++) {
-		fprintf(stderr, "el = %p\n", (void *)(el = &table[i]));
-		fprintf(stderr, "key = %s\n", el->key);
+		printf("el = %p\n", (void *)(el = &table[i]));
+		printf("key = %s\n", el->key);
 		displaykey_short("isk", el->value.data, 32);
 	}
 }
@@ -128,11 +128,11 @@ print_table(struct userkv *table)
 	struct userkv *el;
 
 	len = stbds_hmlen(table);
-	fprintf(stderr, "table length = %ld\n", len);
+	printf("table length = %ld\n", len);
 
 	for (i = 0; i < len; i++) {
 		ptrdiff_t arrlen, j;
-		fprintf(stderr, "el = %p\n", (void *)(el = &table[i]));
+		printf("el = %p\n", (void *)(el = &table[i]));
 		displaykey_short("isk", el->key.data, 32);
 		displaykey_short("ik", el->value.ik, 32);
 		displaykey_short("spk", el->value.spk, 32);
@@ -175,15 +175,15 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 	uint8_t failure = 1;
 
 	if (size < IDENT_REGISTER_MSG_BASE_SIZE)
-		errg("Registration message (%lu) is too short (%lu).",
+		errg(fail, "Registration message (%lu) is too short (%lu).",
 			size, IDENT_REGISTER_MSG_BASE_SIZE);
 
 	if (size < IDENT_REGISTER_MSG_SIZE(msg->username_len))
-		errg("Registration message (%lu) is the wrong size (%lu).",
+		errg(fail, "Registration message (%lu) is the wrong size (%lu).",
 			size, IDENT_REGISTER_MSG_SIZE(msg->username_len));
 
 	if (msg->username[msg->username_len] != '\0')
-		errg("Cannot register a username that is not a valid string.");
+		errg(fail, "Cannot register a username that is not a valid string.");
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) != NULL) {
@@ -191,11 +191,11 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 			failure = 0;
 			goto fail;
 		}
-		errg("Cannot register an already-registered identity key.");
+		errg(fail, "Cannot register an already-registered identity key.");
 	}
 
 	if (stbds_shgetp_null(ctx->namestable, msg->username) != NULL)
-		errg("Cannot register an already-registered username.");
+		errg(fail, "Cannot register an already-registered username.");
 
 	failure = 0;
 
@@ -203,13 +203,13 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 	stbds_shput(ctx->namestable, msg->username, isk);
 	ui.username = ctx->namestable[stbds_shlen(ctx->namestable) - 1].key;
 	ui.peer = peer;
-	fprintf(stderr, "username: %s\n", ui.username);
+	printf("username: %s\n", ui.username);
 	stbds_hmput(ctx->table, isk, ui);
 
 fail:
 	size = ident_register_ack_init(PACKET_TEXT(buf), failure);
 	send_packet(fd, peer, buf, size);
-	fprintf(stderr, "sent %lu-byte (%lu-byte) register ack message\n",
+	printf("sent %lu-byte (%lu-byte) register ack message\n",
 		size, PACKET_BUF_SIZE(size));
 
 	print_table(ctx->table);
@@ -228,15 +228,15 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	uint8_t failure = 1;
 
 	if (size < IDENT_SPKSUB_MSG_SIZE)
-		errg("Signed prekey submission message (%lu) is the wrong size (%lu).",
+		errg(fail, "Signed prekey submission message (%lu) is the wrong size (%lu).",
 			size, IDENT_SPKSUB_MSG_SIZE);
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only submit a signed prekey for a registered identity.");
+		errg(fail, "Can only submit a signed prekey for a registered identity.");
 
 	if (check_key(isk.data, "AIBS", msg->spk, msg->spk_sig))
-		errg("Failed signature");
+		errg(fail, "Failed signature");
 
 	failure = 0;
 	memcpy(kv->value.spk, msg->spk, 32);
@@ -245,7 +245,7 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 fail:
 	size = ident_spksub_ack_init(PACKET_TEXT(buf), failure);
 	send_packet(fd, peer, buf, size);
-	fprintf(stderr, "sent %lu-byte (%lu-byte) spksub ack message\n",
+	printf("sent %lu-byte (%lu-byte) spksub ack message\n",
 		size, PACKET_BUF_SIZE(size));
 
 	print_table(ctx->table);
@@ -265,18 +265,18 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	uint8_t failure = 1;
 
 	if (size < IDENT_OPKSSUB_MSG_BASE_SIZE)
-		errg("One-time prekey submission message (%lu) is too short (%lu).",
+		errg(fail, "One-time prekey submission message (%lu) is too short (%lu).",
 			size, IDENT_OPKSSUB_MSG_BASE_SIZE);
 
 	opkcount = load16_le(msg->opk_count);
-	fprintf(stderr, "OPK count: %d\n", opkcount);
+	printf("OPK count: %d\n", opkcount);
 	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount))
-		errg("One-time prekey submission message (%lu) is the wrong size (%lu).",
+		errg(fail, "One-time prekey submission message (%lu) is the wrong size (%lu).",
 			size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only submit one-time prekeys for a registered identity.");
+		errg(fail, "Can only submit one-time prekeys for a registered identity.");
 
 	failure = 0;
 
@@ -290,7 +290,7 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 fail:
 	size = ident_opkssub_ack_init(PACKET_TEXT(buf), failure);
 	send_packet(fd, peer, buf, size);
-	fprintf(stderr, "sent %lu-byte (%lu-byte) opkssub ack message\n",
+	printf("sent %lu-byte (%lu-byte) opkssub ack message\n",
 		size, PACKET_BUF_SIZE(size));
 
 	print_table(ctx->table);
@@ -307,21 +307,21 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	uint8_t namelen;
 
 	if (size < IDENT_LOOKUP_MSG_BASE_SIZE)
-		errg("Username lookup message (%lu) is too small (%lu).",
+		errg(fail, "Username lookup message (%lu) is too small (%lu).",
 			size, IDENT_LOOKUP_MSG_BASE_SIZE);
 	namelen = msg->username_len;
 	if (size < IDENT_LOOKUP_MSG_SIZE(namelen))
-		errg("Username lookup message (%lu) is the wrong size (%lu).",
+		errg(fail, "Username lookup message (%lu) is the wrong size (%lu).",
 			size, IDENT_LOOKUP_MSG_SIZE(namelen));
 	if (msg->username[namelen] != '\0')
-		errg("Username lookup message is invalid.");
+		errg(fail, "Username lookup message is invalid.");
 
 	k = stbds_shget(ctx->namestable, msg->username);
 
 fail:
 	size = ident_lookup_rep_init(PACKET_TEXT(buf), k.data);
 	send_packet(fd, peer, buf, size);
-	fprintf(stderr, "sent %lu-byte (%lu-byte) lookup ack message\n",
+	printf("sent %lu-byte (%lu-byte) lookup ack message\n",
 		size, PACKET_BUF_SIZE(size));
 
 	print_nametable(ctx->namestable);
@@ -340,12 +340,12 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t
 	struct userinfo blank = {.username = blankusername}, *value = &blank;
 
 	if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE)
-		errg("Username reverse-lookup message (%lu) is too small (%lu).",
+		errg(fail, "Username reverse-lookup message (%lu) is too small (%lu).",
 			size, IDENT_REVERSE_LOOKUP_MSG_SIZE);
 
 	memcpy(isk.data, msg->isk, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only look up a username of a registered identity.");
+		errg(fail, "Can only look up a username of a registered identity.");
 
 	value = &kv->value;
 
@@ -353,7 +353,7 @@ fail:
 	size = ident_reverse_lookup_rep_init(PACKET_TEXT(buf),
 		value->username);
 	send_packet(fd, peer, buf, size);
-	fprintf(stderr, "sent %lu-byte (%lu-byte) reverse lookup ack message\n",
+	printf("sent %lu-byte (%lu-byte) reverse lookup ack message\n",
 		size, PACKET_BUF_SIZE(size));
 
 	print_nametable(ctx->namestable);
@@ -372,12 +372,12 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	struct key opk = {0};
 
 	if (size < IDENT_KEYREQ_MSG_SIZE)
-		errg("Key bundle request message (%lu) is the wrong size (%lu).",
+		errg(fail, "Key bundle request message (%lu) is the wrong size (%lu).",
 			size, IDENT_KEYREQ_MSG_SIZE);
 
 	memcpy(isk.data, msg->isk, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Can only request a key bundle for a registered identity.");
+		errg(fail, "Can only request a key bundle for a registered identity.");
 
 	value = &kv->value;
 
@@ -390,7 +390,7 @@ fail:
 	size = ident_keyreq_rep_init(PACKET_TEXT(buf),
 		value->spk, value->spk_sig, opk.data);
 	send_packet(fd, peer, buf, size);
-	fprintf(stderr, "sent %lu-byte (%lu-byte) key request ack message\n",
+	printf("sent %lu-byte (%lu-byte) key request ack message\n",
 		size, PACKET_BUF_SIZE(size));
 
 	print_table(ctx->table);
@@ -412,12 +412,12 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, si
 	size_t totalmsglength;
 
 	if (size < MSG_FETCH_MSG_SIZE)
-		errg("Message-fetching message (%lu) is too small (%lu).",
+		errg(fail, "Message-fetching message (%lu) is too small (%lu).",
 			size, MSG_FETCH_MSG_SIZE);
 
 	memcpy(isk.data, peer->state.u.rad.iskc, 32);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		errg("Only registered identities may fetch messages.");
+		errg(fail, "Only registered identities may fetch messages.");
 
 	/* TODO: set to maximum value that makes total packet size <= 64k */
 	/* slack = 32768; */
@@ -447,8 +447,85 @@ fail:
 	}
 
 	send_packet(fd, peer, buf, size);
-	fprintf(stderr, "sent %lu-byte (%lu-byte) message fetch reply message\n",
+	printf("sent %lu-byte (%lu-byte) message fetch reply message\n",
 		size, PACKET_BUF_SIZE(size));
+}
+
+static
+void
+handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+{
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
+	struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
+	struct msg_fetch_reply_msg *repmsg;
+	struct msg_fetch_content_msg *innermsg;
+	struct userkv *kv;
+	struct stored_message smsg;
+	struct key isk;
+	int result = 1;
+	uint16_t message_size;
+	size_t repsize, totalmsglength;
+
+	if (size < MSG_FORWARD_MSG_BASE_SIZE)
+		errg(fail, "Message-forwarding message (%lu) is too small (%lu).",
+			size, MSG_FORWARD_MSG_BASE_SIZE);
+
+	if (msg->message_count != 1)
+		errg(fail, "Message-forwarding messages with more than one message within not yet supported.");
+
+	if (size < MSG_FORWARD_MSG_BASE_SIZE + 2)
+		errg(fail, "Message-forwarding message (%lu) is too small (%lu).",
+			size, MSG_FORWARD_MSG_BASE_SIZE + 2);
+
+	message_size = load16_le(msg->messages);
+	if (size < MSG_FORWARD_MSG_SIZE(2 + message_size))
+		errg(fail, "Message-forwarding message (%lu) is the wrong size (%lu).",
+			size, MSG_FORWARD_MSG_SIZE(2 + message_size));
+
+	memcpy(isk.data, msg->isk, 32);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
+		errg(fail, "Can only forward messages to a registered identity.");
+
+	result = 0;
+
+	if (kv->value.peer == NULL) {
+		smsg.data = malloc(message_size);
+		if (smsg.data == NULL) {
+			result = 1;
+			errg(fail, "Cannot allocate memory.");
+		}
+
+		memcpy(smsg.isk, peer->state.u.rad.iskc, 32);
+		memcpy(smsg.data, msg->messages + 2, message_size);
+		smsg.size = message_size;
+
+		crypto_wipe(buf, nread);
+
+		stbds_arrpush(kv->value.letterbox, smsg);
+	} else {
+		repmsg = (struct msg_fetch_reply_msg *)text;
+		innermsg = (struct msg_fetch_content_msg *)repmsg->messages;
+
+		memmove(innermsg->text, msg->messages + 2, message_size);
+
+		totalmsglength = message_size + 34;
+		repsize = msg_fetch_rep_init(PACKET_TEXT(buf), 1, totalmsglength);
+		repmsg->msg.type = MSG_IMMEDIATE;
+
+		store16_le(innermsg->len, message_size);
+		memcpy(innermsg->isk,  peer->state.u.rad.iskc, 32);
+
+		send_packet(fd, kv->value.peer, buf, repsize);
+		printf("sent %lu-byte (%lu-byte) immediate forwarding message\n",
+			repsize, PACKET_BUF_SIZE(repsize));
+	}
+
+fail:
+	repsize = msg_forward_ack_init(PACKET_TEXT(buf), result);
+	send_packet(fd, peer, buf, repsize);
+	printf("sent %lu-byte (%lu-byte) forward ack message\n",
+		repsize, PACKET_BUF_SIZE(repsize));
 }
 
 struct datagram_handler_args {
@@ -472,30 +549,30 @@ handle_datagram(void *args_void)
 	nread = safe_recvfrom_nonblock(fd, buf, 65536,
 		&pi.addr, &pi.addr_len);
 
-	fprintf(stderr, "Received %zu bytes. ", nread);
+	printf("Received %zu bytes. ", nread);
 
 	peer = peer_getbyaddr(&ctx->peertable, sstosa(&pi.addr), pi.addr_len);
 	if (peer == NULL) {
-		fprintf(stderr, "Peer not found. ");
+		printf("Peer not found. ");
 		peer = peer_add(&ctx->peertable, &pi);
 		if (peer == NULL)
 			errx(EXIT_FAILURE, "Failed to add peer to peertable.");
-	} else fprintf(stderr, "Peer in table. ");
+	} else printf("Peer in table. ");
 
 	if (peer_getnameinfo(peer))
-		fprintf(stderr, "Peer on unknown host and port. ");
+		printf("Peer on unknown host and port. ");
 	else
-		fprintf(stderr, "Peer %s on port %s. ",
+		printf("Peer %s on port %s. ",
 			peer->host, peer->service);
 
-	fprintf(stderr, "Peer status: %d\n", peer->status);
+	printf("Peer status: %d\n", peer->status);
 
 	/* This is either a HELLO message from a new peer or a message
 	 * from a peer that isn't new but has just changed addresses
 	 * that just happens to be exactly PACKET_HELLO_SIZE bytes.
 	 */
 	if (peer->status == PEER_NEW && nread == PACKET_HELLO_SIZE) {
-		fprintf(stderr, "This appears to be a HELLO message from a new peer.\n");
+		printf("This appears to be a HELLO message from a new peer.\n");
 
 		/* TODO: Proof of work - to prevent denial of service:
 		 * The server should require that the client does some
@@ -535,15 +612,15 @@ handle_datagram(void *args_void)
 			crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 			peer->status = PEER_ACTIVE;
-			fprintf(stderr, "Peer status: %d\n", peer->status);
+			printf("Peer status: %d\n", peer->status);
 			return;
 		}
 
-		fprintf(stderr, "Whoops it wasn't a HELLO... at least not a valid one\n");
+		printf("Whoops it wasn't a HELLO... at least not a valid one\n");
 		/* Fall through: check if it's a real message */
 	}
 
-	/* fprintf(stderr, "nread: %lu\n", nread); */
+	/* printf("nread: %lu\n", nread); */
 
 	if (nread <= PACKET_BUF_SIZE(0))
 		errx(EXIT_FAILURE, "invalid message");
@@ -559,9 +636,9 @@ handle_datagram(void *args_void)
 
 	if (size >= sizeof(struct msg)) {
 		struct msg *msg = (struct msg *)text;
-		/* fprintf(stderr, "msg proto = %d\n", msg->proto); */
-		/* fprintf(stderr, "msg type = %d\n", msg->type); */
-		/* fprintf(stderr, "msg len = %d\n", load16_le(msg->len)); */
+		/* printf("msg proto = %d\n", msg->proto); */
+		/* printf("msg type = %d\n", msg->type); */
+		/* printf("msg len = %d\n", load16_le(msg->len)); */
 		switch (msg->proto) {
 		case PROTO_IDENT:
 			switch (msg->type) {
@@ -593,91 +670,9 @@ handle_datagram(void *args_void)
 			case MSG_FETCH_MSG:
 				handle_fetch(ctx, peer, fd, buf, nread);
 				break;
-			case MSG_FORWARD_MSG: {
-				struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
-				int result = 1;
-				uint16_t message_size;
-				struct key isk;
-				struct userkv *kv;
-
-				if (size < MSG_FORWARD_MSG_BASE_SIZE) {
-					fprintf(stderr, "Message-forwarding message (%lu) is too small (%lu).\n",
-						size, MSG_FORWARD_MSG_BASE_SIZE);
-					goto forward_fail;
-				}
-
-				if (msg->message_count != 1) {
-					fprintf(stderr, "Message-forwarding messages with more than one message within not yet supported.\n");
-					goto forward_fail;
-				}
-
-				if (size < MSG_FORWARD_MSG_BASE_SIZE + 2) {
-					fprintf(stderr, "Message-forwarding message (%lu) is too small (%lu).\n",
-						size, MSG_FORWARD_MSG_BASE_SIZE + 2);
-					goto forward_fail;
-				}
-
-				message_size = load16_le(msg->messages);
-				if (size < MSG_FORWARD_MSG_SIZE(2 + message_size)) {
-					fprintf(stderr, "Message-forwarding message (%lu) is the wrong size (%lu).\n",
-						size, MSG_FORWARD_MSG_SIZE(2 + message_size));
-					goto forward_fail;
-				}
-
-				memcpy(isk.data, msg->isk, 32);
-				if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
-					fprintf(stderr, "Can only forward messages to a registered identity.\n");
-					goto forward_fail;
-				}
-
-				result = 0;
-
-				if (kv->value.peer == NULL) {
-					struct stored_message smsg = {0};
-
-					smsg.data = malloc(message_size);
-					if (smsg.data == NULL) {
-						fprintf(stderr, "Cannot allocate memory.\n");
-						result = 1;
-						goto forward_fail;
-					}
-
-					memcpy(smsg.isk, peer->state.u.rad.iskc, 32);
-					memcpy(smsg.data, msg->messages + 2, message_size);
-					smsg.size = message_size;
-
-					crypto_wipe(buf, nread);
-
-					stbds_arrpush(kv->value.letterbox, smsg);
-				} else {
-					struct msg_fetch_reply_msg *repmsg = (struct msg_fetch_reply_msg *)PACKET_TEXT(buf);
-					struct msg_fetch_content_msg *innermsg = (struct msg_fetch_content_msg *)repmsg->messages;
-					size_t repsize, totalmsglength;
-
-					memmove(innermsg->text, msg->messages + 2, message_size);
-
-					totalmsglength = message_size + 34;
-					repsize = msg_fetch_rep_init(PACKET_TEXT(buf), 1, totalmsglength);
-					repmsg->msg.type = MSG_IMMEDIATE;
-
-					store16_le(innermsg->len, message_size);
-					memcpy(innermsg->isk,  peer->state.u.rad.iskc, 32);
-
-					send_packet(fd, kv->value.peer, buf, repsize);
-					fprintf(stderr, "sent %lu-byte (%lu-byte) immediate forwarding message\n",
-						repsize, PACKET_BUF_SIZE(repsize));
-				}
-
-			forward_fail:
-				{
-					size_t repsize = msg_forward_ack_init(PACKET_TEXT(buf), result);
-					send_packet(fd, peer, buf, repsize);
-					fprintf(stderr, "sent %lu-byte (%lu-byte) forward ack message\n",
-						repsize, PACKET_BUF_SIZE(repsize));
-				}
-
+			case MSG_FORWARD_MSG: 
+				handle_forward(ctx, peer, fd, buf, nread);
 				break;
-			}
 			default:
 				fprintf(stderr, "fail\n");
 				abort();
@@ -717,6 +712,8 @@ interval_timer_thread(void *ts_void)
 	struct timespec *ts = (struct timespec *)ts_void;
 	int fd, res;
 	struct itimerspec timer;
+	uint64_t expirations;
+	ssize_t n;
 
 	fd = timerfd_create(CLOCK_MONOTONIC, O_NONBLOCK);
 	if (fd == -1)
@@ -724,14 +721,13 @@ interval_timer_thread(void *ts_void)
 
 	timer.it_value = *ts;
 	timer.it_interval = *ts;
+	free(ts);
+
 	res = timerfd_settime(fd, 0, &timer, NULL);
 	if (res == -1)
 		err(EXIT_FAILURE, "Could not set timer");
 
 	for (;;) {
-		uint64_t expirations;
-		ssize_t n;
-
 		fibre_awaitfd(fd, POLLIN);
 
 		n = read(fd, &expirations, sizeof expirations);
@@ -748,10 +744,11 @@ void
 serve(int argc, char **argv)
 {
 	struct addrinfo hints, *result, *rp;
-	struct timespec interval;
+	struct timespec *interval;
 	struct server_ctx ctx = {0};
 	const char *host, *port;
 	int fd = -1, gai;
+	struct datagram_handler_args args;
 
 	if (argc < 2 || argc > 4)
 		usage();
@@ -761,8 +758,6 @@ serve(int argc, char **argv)
 
 	if (peertable_init(&ctx.peertable))
 		err(EXIT_FAILURE, "Couldn't initialise peer table.");
-
-	fibre_init(4096 * 256);
 
 	stbds_sh_new_arena(ctx.namestable);
 
@@ -794,13 +789,16 @@ serve(int argc, char **argv)
 	if (rp == NULL)
 		err(EXIT_FAILURE, "Couldn't bind to socket");
 
-	interval.tv_sec = 10;
-	interval.tv_nsec = 0;
-	fibre_go(interval_timer_thread, &interval);
+	interval = malloc(sizeof *interval);
+	if (interval == NULL)
+		err(EXIT_FAILURE, "Could not allocate timespec `interval'");
+	interval->tv_sec = 10;
+	interval->tv_nsec = 0;
+	fibre_go(interval_timer_thread, interval);
 
 	fibre_go(stdin_thread, NULL);
 
-	struct datagram_handler_args args = {&ctx, fd};
+	args = (struct datagram_handler_args){&ctx, fd};
 	fibre_go(handler_thread, &args);
 
 	while (fibre_yield())
@@ -866,20 +864,20 @@ test_fibre(void *_counter)
 	intptr_t j = (intptr_t)_counter;
 	struct timespec ts = {0};
 
-	fprintf(stderr, "Hello from %ld %d (%d)\n", j, fibre_current(), i);
+	printf("Hello from %ld %d (%d)\n", j, fibre_current(), i);
 	if (++i < 3) {
-		/* fprintf(stderr, "Sleep1 from %ld %d (%d)!\n", j, fibre_current(), i); */
+		/* printf("Sleep1 from %ld %d (%d)!\n", j, fibre_current(), i); */
 		/* ts.tv_sec = 1; */
 		/* fibre_sleep(&ts); */
-		fprintf(stderr, "Go1 from %ld %d (%d)!\n", j, fibre_current(), i);
+		printf("Go1 from %ld %d (%d)!\n", j, fibre_current(), i);
 		fibre_go(test_fibre, (void *)(counter++));
-		fprintf(stderr, "Sleep2 from %ld %d (%d)!\n", j, fibre_current(), i);
+		printf("Sleep2 from %ld %d (%d)!\n", j, fibre_current(), i);
 		ts.tv_sec = 2;
 		fibre_sleep(&ts);
-		fprintf(stderr, "Go2 from %ld %d (%d)!\n", j, fibre_current(), i);
+		printf("Go2 from %ld %d (%d)!\n", j, fibre_current(), i);
 		fibre_go(test_fibre, (void *)(counter++));
 	}
-	fprintf(stderr, "Goodbye from %ld %d (%d)\n", j, fibre_current(), i);
+	printf("Goodbye from %ld %d (%d)\n", j, fibre_current(), i);
 	fibre_return();
 }
 
@@ -912,7 +910,6 @@ fibre(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	fibre_init(STACK_SIZE);
 	fibre_go(test_fibre, (void *)(counter++));
 	fibre_go(test_fibre2, NULL);
 	while (fibre_yield());
@@ -939,6 +936,7 @@ main(int argc, char **argv)
 
 	randbytes(seed, 8);
 	stbds_rand_seed(load64_le(seed));
+	fibre_init(STACK_SIZE);
 
 	switch (argv[1][0]) {
 		case 'a': alice(argc, argv); break;

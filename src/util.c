@@ -49,23 +49,23 @@ void
 dumpbytes(const uint8_t *data, size_t size)
 {
 	while (size--)
-		fprintf(stderr, "%02x", *data++);
+		printf("%02x", *data++);
 }
 
 void
 displaykey(const char *name, const uint8_t *key, size_t size)
 {
-	fprintf(stderr, "%s:\n", name);
+	printf("%s:\n", name);
 	dumpbytes(key, size);
-	fprintf(stderr, "\n");
+	printf("\n");
 }
 
 void
 displaykey_short(const char *name, const uint8_t *key, size_t size)
 {
-	fprintf(stderr, "%s:\t", name);
+	printf("%s:\t", name);
 	dumpbytes(key, size);
-	fprintf(stderr, "\n");
+	printf("\n");
 }
 
 #ifdef __APPLE__
