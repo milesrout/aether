@@ -11,7 +11,6 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
-#include <sys/timerfd.h>
 
 #include "err.h"
 #include "util.h"
@@ -579,80 +578,6 @@ fibre_enqueue_waiting(struct fibre *fibre)
 		fibre);
 }
 
-static int fibre_yield_impl(int should_wait);
-
-int
-fibre_sleep_s(time_t seconds)
-{
-	struct timespec ts;
-
-	ts.tv_sec = seconds;
-	ts.tv_nsec = 0;
-
-	return fibre_sleep(&ts);
-}
-
-int
-fibre_sleep_ms(long milliseconds)
-{
-	struct timespec ts;
-
-	ts.tv_sec = 0;
-	ts.tv_nsec = milliseconds * 1000000;
-
-	return fibre_sleep(&ts);
-}
-
-int
-fibre_sleep_us(long microseconds)
-{
-	struct timespec ts;
-
-	ts.tv_sec = 0;
-	ts.tv_nsec = microseconds * 1000;
-
-	return fibre_sleep(&ts);
-}
-
-int
-fibre_sleep_ns(long nanoseconds)
-{
-	struct timespec ts;
-
-	ts.tv_sec = 0;
-	ts.tv_nsec = nanoseconds;
-
-	return fibre_sleep(&ts);
-}
-
-int
-fibre_sleep(const struct timespec *duration)
-{
-	int fd, res, result;
-	struct itimerspec timer;
-
-	fd = timerfd_create(CLOCK_MONOTONIC, O_NONBLOCK);
-	if (fd == -1)
-		err(EXIT_FAILURE, "Could not create timerfd");
-
-	timer.it_value.tv_sec = duration->tv_sec;
-	timer.it_value.tv_nsec = duration->tv_nsec;
-	timer.it_interval.tv_sec = 0;
-	timer.it_interval.tv_nsec = 0;
-	res = timerfd_settime(fd, 0, &timer, NULL);
-	if (res == -1)
-		err(EXIT_FAILURE, "Could not set timer");
-
-	result = fibre_awaitfd(fd, POLLIN);
-
-	res = close(fd);
-	if (res == -1)
-		err(EXIT_FAILURE, "Could not close");
-
-	return result;
-}
-
-/* assume that fd was opened as non-blocking */
 ssize_t
 fibre_read(int fd, void *buf, size_t count)
 {
@@ -662,13 +587,12 @@ fibre_read(int fd, void *buf, size_t count)
 	n = read(fd, buf, count);
 	while (n == -1 && errno == EAGAIN) {
 		fibre_awaitfd(fd, POLLIN);
-		n = read(fd, buf, count);
+		n = recv(fd, buf, count, MSG_DONTWAIT);
 	}
 
 	return n;
 }
 
-/* assume that fd was opened as non-blocking */
 ssize_t
 fibre_write(int fd, const void *buf, size_t count)
 {
@@ -678,7 +602,7 @@ fibre_write(int fd, const void *buf, size_t count)
 	n = write(fd, buf, count);
 	while (n == -1 && errno == EAGAIN) {
 		fibre_awaitfd(fd, POLLOUT);
-		n = write(fd, buf, count);
+		n = send(fd, buf, count, MSG_DONTWAIT);
 	}
 
 	return n;
@@ -694,7 +618,7 @@ fibre_recvfrom(int fd, void *buf, size_t len, int flags,
 	n = recvfrom(fd, buf, len, flags, peeraddr, peeraddr_len);
 	while (n == -1 && errno == EAGAIN) {
 		fibre_awaitfd(fd, POLLOUT);
-		n = recvfrom(fd, buf, len, flags, peeraddr, peeraddr_len);
+		n = recvfrom(fd, buf, len, MSG_DONTWAIT|flags, peeraddr, peeraddr_len);
 	}
 
 	return n;
@@ -710,24 +634,10 @@ fibre_sendto(int fd, const void *buf, size_t len, int flags,
 	n = sendto(fd, buf, len, flags, peeraddr, peeraddr_len);
 	while (n == -1 && errno == EAGAIN) {
 		fibre_awaitfd(fd, POLLOUT);
-		n = sendto(fd, buf, len, flags, peeraddr, peeraddr_len);
+		n = sendto(fd, buf, len, MSG_DONTWAIT|flags, peeraddr, peeraddr_len);
 	}
 
 	return n;
-}
-
-int
-fibre_awaitfd(int fd, int events)
-{
-	current_fibre->f_fd = fd;
-	current_fibre->f_events = events;
-	return fibre_yield_impl(1);
-}
-
-int
-fibre_yield(void)
-{
-	return fibre_yield_impl(0);
 }
 
 static
@@ -771,6 +681,20 @@ fibre_yield_impl(int should_wait)
 	VALGRIND_STACK_DEREGISTER(old_fibre->f_valgrind_id);
 #endif
 	return 1;
+}
+
+int
+fibre_awaitfd(int fd, int events)
+{
+	current_fibre->f_fd = fd;
+	current_fibre->f_events = events;
+	return fibre_yield_impl(1);
+}
+
+int
+fibre_yield(void)
+{
+	return fibre_yield_impl(0);
 }
 
 #define FMTREG "0x%010llx"
