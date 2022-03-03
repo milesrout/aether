@@ -96,88 +96,100 @@ randusername(char *username, const char *base)
 }
 
 void
-simple_key_exchange(uint8_t shared_key[32],
-	const uint8_t my_private_key[32], const uint8_t his_public_key[32],
-	const uint8_t first_public_key[32], const uint8_t second_public_key[32])
+simple_key_exchange(uint8_t shared[32],
+		const uint8_t my_prv[32], const uint8_t his_pub[32],
+		const uint8_t first_pub[32], const uint8_t second_pub[32])
 {
-
 	crypto_blake2b_ctx ctx;
 
-	crypto_x25519(shared_key, my_private_key, his_public_key);
+	crypto_x25519(shared, my_prv, his_pub);
 	crypto_blake2b_general_init(&ctx, 32, NULL, 0);
-	crypto_blake2b_update(&ctx, shared_key, 32);
-	crypto_blake2b_update(&ctx, first_public_key, 32);
-	crypto_blake2b_update(&ctx, second_public_key, 32);
-	crypto_blake2b_final(&ctx, shared_key);
+	crypto_blake2b_update(&ctx, shared, 32);
+	crypto_blake2b_update(&ctx, first_pub, 32);
+	crypto_blake2b_update(&ctx, second_pub, 32);
+	crypto_blake2b_final(&ctx, shared);
 }
 
 void
-generate_hidden_keypair(uint8_t hidden_key[32], uint8_t private_key[32])
+generate_hidden_keypair(uint8_t hidden[32], uint8_t prv[32])
 {
 	uint8_t seed[32];
 	randbytes(seed, 32);
-	crypto_hidden_key_pair(hidden_key, private_key, seed);
+	crypto_hidden_key_pair(hidden, prv, seed);
 	crypto_wipe(seed, 32);
 }
 
 void
-generate_kex_keypair(uint8_t public_key[32], uint8_t private_key[32])
+generate_kex_keypair(uint8_t pub[32], uint8_t prv[32])
 {
-	randbytes(private_key, 32);
-	crypto_x25519_public_key(public_key, private_key);
+	randbytes(prv, 32);
+	crypto_x25519_public_key(pub, prv);
 }
 
 void
-generate_sig_keypair(uint8_t public_key[32], uint8_t private_key[32])
+generate_sig_keypair(uint8_t pub[32], uint8_t prv[32])
 {
-	randbytes(private_key, 32);
-	crypto_sign_public_key(public_key, private_key);
+	randbytes(prv, 32);
+	crypto_sign_public_key(pub, prv);
 }
 
 /* BEGIN: these are derived from monocypher directly */
 void
 store16_le(uint8_t out[2], uint16_t in)
 {
-    out[0] = (uint8_t)( in        & 0xff);
-    out[1] = (uint8_t)((in >>  8) & 0xff);
+	out[0] = (uint8_t)( in        & 0xff);
+	out[1] = (uint8_t)((in >>  8) & 0xff);
 }
 
 uint16_t
 load16_le(const uint8_t s[2])
 {
-    return (uint16_t)s[0]
-        | ((uint16_t)s[1] <<  8);
+	return (uint16_t)s[0]
+	    | ((uint16_t)s[1] <<  8);
 }
 
 void
 store32_le(uint8_t out[4], uint32_t in)
 {
-    out[0] = (uint8_t)( in        & 0xff);
-    out[1] = (uint8_t)((in >>  8) & 0xff);
-    out[2] = (uint8_t)((in >> 16) & 0xff);
-    out[3] = (uint8_t)((in >> 24) & 0xff);
+	out[0] = (uint8_t)( in        & 0xff);
+	out[1] = (uint8_t)((in >>  8) & 0xff);
+	out[2] = (uint8_t)((in >> 16) & 0xff);
+	out[3] = (uint8_t)((in >> 24) & 0xff);
 }
 
 uint32_t
 load32_le(const uint8_t s[4])
 {
-    return (uint32_t)s[0]
-        | ((uint32_t)s[1] <<  8)
-        | ((uint32_t)s[2] << 16)
-        | ((uint32_t)s[3] << 24);
-}
-
-uint64_t
-load64_le(const uint8_t s[8])
-{
-    return load32_le(s) | ((uint64_t)load32_le(s+4) << 32);
+	return (uint32_t)s[0]
+	    | ((uint32_t)s[1] <<  8)
+	    | ((uint32_t)s[2] << 16)
+	    | ((uint32_t)s[3] << 24);
 }
 
 void
 store64_le(uint8_t out[8], uint64_t in)
 {
-    store32_le(out    , (uint32_t)in );
-    store32_le(out + 4, in >> 32);
+	out[0] = (uint8_t)( in        & 0xff);
+	out[1] = (uint8_t)((in >>  8) & 0xff);
+	out[2] = (uint8_t)((in >> 16) & 0xff);
+	out[3] = (uint8_t)((in >> 24) & 0xff);
+	out[4] = (uint8_t)((in >> 32) & 0xff);
+	out[5] = (uint8_t)((in >> 40) & 0xff);
+	out[6] = (uint8_t)((in >> 48) & 0xff);
+	out[7] = (uint8_t)((in >> 56) & 0xff);
+}
+
+uint64_t
+load64_le(const uint8_t s[8])
+{
+	return (uint64_t)s[0]
+	    | ((uint64_t)s[1] <<  8)
+	    | ((uint64_t)s[2] << 16)
+	    | ((uint64_t)s[3] << 24)
+	    | ((uint64_t)s[4] << 32)
+	    | ((uint64_t)s[5] << 40)
+	    | ((uint64_t)s[6] << 48)
+	    | ((uint64_t)s[7] << 56);
 }
 /* END: these are derived from monocypher directly */
 
