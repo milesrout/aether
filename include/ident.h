@@ -36,7 +36,6 @@ struct ident_opkssub_msg {
 #define IDENT_OPKSSUB_MSG_SIZE(n) (sizeof(struct ident_opkssub_msg) + 32 * (n))
 struct ident_opkssub_ack_msg {
 	struct msg msg;
-	uint8_t msn[4];
 	uint8_t result;
 };
 struct ident_spksub_msg {
@@ -47,7 +46,6 @@ struct ident_spksub_msg {
 #define IDENT_SPKSUB_MSG_SIZE (sizeof(struct ident_spksub_msg))
 struct ident_spksub_ack_msg {
 	struct msg msg;
-	uint8_t msn[4];
 	uint8_t result;
 };
 struct ident_keyreq_msg {
@@ -57,7 +55,6 @@ struct ident_keyreq_msg {
 #define IDENT_KEYREQ_MSG_SIZE (sizeof(struct ident_keyreq_msg))
 struct ident_keyreq_reply_msg {
 	struct msg msg;
-	uint8_t msn[4];
 	uint8_t spk[32];
 	uint8_t spk_sig[64];
 	uint8_t opk[32];
@@ -71,7 +68,6 @@ struct ident_register_msg {
 #define IDENT_REGISTER_MSG_SIZE(n) (IDENT_REGISTER_MSG_BASE_SIZE + (n) + 1)
 struct ident_register_ack_msg {
 	struct msg msg;
-	uint8_t msn[4];
 	uint8_t result;
 };
 #define IDENT_REGISTER_ACK_SIZE (sizeof(struct ident_register_ack_msg))
@@ -84,7 +80,6 @@ struct ident_lookup_msg {
 #define IDENT_LOOKUP_MSG_SIZE(n) (IDENT_LOOKUP_MSG_BASE_SIZE + (n) + 1)
 struct ident_lookup_reply_msg {
 	struct msg msg;
-	uint8_t msn[4];
 	uint8_t isk[32];
 };
 #define IDENT_LOOKUP_REP_SIZE (sizeof(struct ident_lookup_reply_msg))
@@ -95,7 +90,6 @@ struct ident_reverse_lookup_msg {
 #define IDENT_REVERSE_LOOKUP_MSG_SIZE (sizeof(struct ident_reverse_lookup_msg))
 struct ident_reverse_lookup_reply_msg {
 	struct msg msg;
-	uint8_t msn[4];
 	uint8_t username_len;
 	uint8_t username[];
 };
@@ -118,16 +112,14 @@ struct ident_state {
 	struct keypair *spks;
 };
 extern size_t ident_opkssub_msg_init(struct ident_state *, uint8_t *buf);
-extern size_t ident_opkssub_ack_init(uint8_t *buf, uint8_t msn[4], uint8_t result);
+extern size_t ident_opkssub_ack_init(uint8_t *buf, uint8_t result);
 extern size_t ident_spksub_msg_init(struct ident_state *, uint8_t *buf);
-extern size_t ident_spksub_ack_init(uint8_t *buf, uint8_t msn[4], uint8_t result);
+extern size_t ident_spksub_ack_init(uint8_t *buf, uint8_t result);
 extern size_t ident_keyreq_msg_init(struct ident_state *, uint8_t *buf, const uint8_t isk[32]);
-extern size_t ident_keyreq_rep_init(uint8_t *buf, uint8_t msn[4],
-	/* uint8_t ik[32], uint8_t ik_sig[64], */
-	uint8_t spk[32], uint8_t spk_sig[64], uint8_t opk[32]);
+extern size_t ident_keyreq_rep_init(uint8_t *buf, uint8_t spk[32], uint8_t spk_sig[64], uint8_t opk[32]);
 extern size_t ident_register_msg_init(struct ident_state *, uint8_t *buf, char const *username);
-extern size_t ident_register_ack_init(uint8_t *buf, uint8_t msn[4], uint8_t result);
+extern size_t ident_register_ack_init(uint8_t *buf, uint8_t result);
 extern size_t ident_lookup_msg_init(uint8_t *buf, char const *username);
-extern size_t ident_lookup_rep_init(uint8_t *buf, uint8_t msn[4], uint8_t isk[32]);
+extern size_t ident_lookup_rep_init(uint8_t *buf, uint8_t isk[32]);
 extern size_t ident_reverse_lookup_msg_init(uint8_t *buf, uint8_t isk[32]);
-extern size_t ident_reverse_lookup_rep_init(uint8_t *buf, uint8_t msn[4], const char *username);
+extern size_t ident_reverse_lookup_rep_init(uint8_t *buf, const char *username);

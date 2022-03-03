@@ -166,7 +166,6 @@ static
 void
 handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_register_msg *msg = (struct ident_register_msg *)text;
@@ -208,7 +207,7 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 	stbds_hmput(ctx->table, isk, ui);
 
 fail:
-	size = ident_register_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
+	size = ident_register_ack_init(PACKET_TEXT(buf), failure);
 	send_packet(fd, peer, buf, size);
 	fprintf(stderr, "sent %lu-byte (%lu-byte) register ack message\n",
 		size, PACKET_BUF_SIZE(size));
@@ -221,7 +220,6 @@ static
 void
 handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
@@ -245,7 +243,7 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	memcpy(kv->value.spk_sig, msg->spk_sig, 64);
 
 fail:
-	size = ident_spksub_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
+	size = ident_spksub_ack_init(PACKET_TEXT(buf), failure);
 	send_packet(fd, peer, buf, size);
 	fprintf(stderr, "sent %lu-byte (%lu-byte) spksub ack message\n",
 		size, PACKET_BUF_SIZE(size));
@@ -257,7 +255,6 @@ static
 void
 handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
@@ -291,7 +288,7 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	}
 
 fail:
-	size = ident_opkssub_ack_init(PACKET_TEXT(buf), hdr->msn, failure);
+	size = ident_opkssub_ack_init(PACKET_TEXT(buf), failure);
 	send_packet(fd, peer, buf, size);
 	fprintf(stderr, "sent %lu-byte (%lu-byte) opkssub ack message\n",
 		size, PACKET_BUF_SIZE(size));
@@ -303,7 +300,6 @@ static
 void
 handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
@@ -323,7 +319,7 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	k = stbds_shget(ctx->namestable, msg->username);
 
 fail:
-	size = ident_lookup_rep_init(PACKET_TEXT(buf), hdr->msn, k.data);
+	size = ident_lookup_rep_init(PACKET_TEXT(buf), k.data);
 	send_packet(fd, peer, buf, size);
 	fprintf(stderr, "sent %lu-byte (%lu-byte) lookup ack message\n",
 		size, PACKET_BUF_SIZE(size));
@@ -335,7 +331,6 @@ static
 void
 handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
@@ -356,7 +351,7 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t
 
 fail:
 	size = ident_reverse_lookup_rep_init(PACKET_TEXT(buf),
-		hdr->msn, value->username);
+		value->username);
 	send_packet(fd, peer, buf, size);
 	fprintf(stderr, "sent %lu-byte (%lu-byte) reverse lookup ack message\n",
 		size, PACKET_BUF_SIZE(size));
@@ -368,7 +363,6 @@ static
 void
 handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
@@ -393,7 +387,7 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 		crypto_wipe(opk.data, 32);
 
 fail:
-	size = ident_keyreq_rep_init(PACKET_TEXT(buf), hdr->msn,
+	size = ident_keyreq_rep_init(PACKET_TEXT(buf),
 		value->spk, value->spk_sig, opk.data);
 	send_packet(fd, peer, buf, size);
 	fprintf(stderr, "sent %lu-byte (%lu-byte) key request ack message\n",
@@ -407,7 +401,6 @@ static
 void
 handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	int msgcount = 0;
@@ -440,7 +433,7 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, si
 
 fail:
 	totalmsglength = msgcount == 0 ? 0 : smsg.size + 34;
-	size = msg_fetch_rep_init(text, hdr->msn, msgcount, totalmsglength);
+	size = msg_fetch_rep_init(text, msgcount, totalmsglength);
 
 	{
 		struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)text;
@@ -555,7 +548,6 @@ handle_datagram(void *args_void)
 	if (nread <= PACKET_BUF_SIZE(0))
 		errx(EXIT_FAILURE, "invalid message");
 
-	struct packethdr *hdr = PACKET_HDR(buf);
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
 
@@ -665,7 +657,7 @@ handle_datagram(void *args_void)
 					memmove(innermsg->text, msg->messages + 2, message_size);
 
 					totalmsglength = message_size + 34;
-					repsize = msg_fetch_rep_init(PACKET_TEXT(buf), hdr->msn, 1, totalmsglength);
+					repsize = msg_fetch_rep_init(PACKET_TEXT(buf), 1, totalmsglength);
 					repmsg->msg.type = MSG_IMMEDIATE;
 
 					store16_le(innermsg->len, message_size);
@@ -678,7 +670,7 @@ handle_datagram(void *args_void)
 
 			forward_fail:
 				{
-					size_t repsize = msg_forward_ack_init(PACKET_TEXT(buf), hdr->msn, result);
+					size_t repsize = msg_forward_ack_init(PACKET_TEXT(buf), result);
 					send_packet(fd, peer, buf, repsize);
 					fprintf(stderr, "sent %lu-byte (%lu-byte) forward ack message\n",
 						repsize, PACKET_BUF_SIZE(repsize));
