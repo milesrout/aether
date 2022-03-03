@@ -100,10 +100,10 @@ tags: $(SRCS)
 
 .PHONY: clean cleanall syntastic debug release valgrind sanitise
 clean:
-	$(RM) build/$(BUILD)/$(TARGET) $(OBJS) $(DEPS)
+	$(RM) -r build/$(BUILD)/*
 
 cleanall: clean
-	$(RM) -r build/{debug,release,musl,valgrind,sanitise,gdb}/*
+	$(RM) -r build/*/*
 
 syntastic:
 	echo $(CFLAGS) | tr ' ' '\n' | sort | grep -v "MMD\|MP" | \
