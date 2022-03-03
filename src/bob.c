@@ -42,6 +42,7 @@
 #include "messaging.h"
 #include "io.h"
 #include "main.h"
+#include "timer.h"
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
@@ -131,7 +132,11 @@ get_username(const char **username_storage, struct packet_state *state, int fd, 
 	size_t size, nread;
 	int result = -1;
 	char *username = NULL;
-	uint8_t buf[65536] = {0};
+	uint8_t *buf;
+
+	buf = calloc(1, 65536);
+	if (buf == NULL)
+		return result;
 
 	size = ident_reverse_lookup_msg_init(PACKET_TEXT(buf), isk);
 	packet_lock(state, buf, size);
@@ -496,10 +501,23 @@ handle_packet(struct ident_state *ident, struct packet_state *state,
 void
 interactive(struct ident_state *ident, struct packet_state *state, struct p2pstate **p2ptable, int fd, uint8_t buf[65536])
 {
-	struct pollfd pfds[] = {{0, POLLIN, 0}, {fd, POLLIN, 0}};
+	struct timespec fivesec = {5};
+	int timerfd;
+	struct pollfd pfds[] = {
+		{STDIN_FILENO, POLLIN},
+		{fd, POLLIN},
+		{0, POLLIN},
+	};
+
+	pfds[2].fd = timerfd = timerfd_open(fivesec);
+	if (timerfd == -1)
+		err(EXIT_FAILURE, "timerfd_open");
 
 	while (1) {
 		int pcount = poll(pfds, 2, 5000);
+		if (pcount == -1)
+			err(EXIT_FAILURE, "poll");
+
 		if (pcount == 0) {
 			size_t size = msg_fetch_init(buf);
 			packet_lock(state, buf, size);
@@ -507,6 +525,11 @@ interactive(struct ident_state *ident, struct packet_state *state, struct p2psta
 			crypto_wipe(buf, PACKET_BUF_SIZE(size));
 			continue;
 		}
+
+		if (pfds[0].revents & (POLLERR|POLLHUP|POLLNVAL))
+			err(EXIT_FAILURE, "poll");
+		if (pfds[1].revents & (POLLERR|POLLHUP|POLLNVAL))
+			err(EXIT_FAILURE, "poll");
 		if (pfds[0].revents & POLLIN)
 			handle_input(state, *p2ptable, fd, buf);
 		if (pfds[1].revents & POLLIN)
@@ -521,7 +544,7 @@ register_identity(struct packet_state *state, struct ident_state *ident,
 	size_t size;
 	int pcount;
 	unsigned regn_state = 0;
-	struct pollfd pfds[1] = {{fd, POLLIN, 0}};
+	struct pollfd pfds[1] = {{fd, POLLIN}};
 
 	while (regn_state < 3) {
 		/* fprintf(stderr, "regn_state: %u\n", regn_state); */

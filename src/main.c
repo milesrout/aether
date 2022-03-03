@@ -47,6 +47,7 @@
 #include "io.h"
 #include "main.h"
 #include "fibre.h"
+#include "timer.h"
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
@@ -699,7 +700,7 @@ handler_thread(void *args_void)
 	struct datagram_handler_args *args_ptr = args_void;
 	struct datagram_handler_args args = *args_ptr;
 
-	while (1) {
+	for (;;) {
 		fibre_awaitfd(args.fd, POLLIN);
 		handle_datagram(&args);
 	}
@@ -710,22 +711,15 @@ void
 interval_timer_thread(void *ts_void)
 {
 	struct timespec *ts = (struct timespec *)ts_void;
-	int fd, res;
-	struct itimerspec timer;
+	int fd;
 	uint64_t expirations;
 	ssize_t n;
 
-	fd = timerfd_create(CLOCK_MONOTONIC, O_NONBLOCK);
+	fd = timerfd_open(*ts);
 	if (fd == -1)
-		err(EXIT_FAILURE, "Could not create fd");
+		err(EXIT_FAILURE, "timerfd_open");
 
-	timer.it_value = *ts;
-	timer.it_interval = *ts;
 	free(ts);
-
-	res = timerfd_settime(fd, 0, &timer, NULL);
-	if (res == -1)
-		err(EXIT_FAILURE, "Could not set timer");
 
 	for (;;) {
 		fibre_awaitfd(fd, POLLIN);
