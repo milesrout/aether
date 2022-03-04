@@ -39,6 +39,7 @@
 -Wmissing-include-dirs
 -Wmissing-prototypes
 -Wnested-externs
+-Wno-missing-field-initializers
 -Wno-overlength-strings
 -Wnormalized=nfkc
 -Wnull-dereference

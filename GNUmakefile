@@ -51,7 +51,7 @@ WARNINGS  += -Wpacked -Wdangling-else -Wparentheses #-Wsign-conversion
 WARNINGS  += -Wdate-time -Wjump-misses-init -Wreturn-local-addr
 WARNINGS  += -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes
 WARNINGS  += -Wmissing-declarations -Wnormalized=nfkc -Wredundant-decls
-WARNINGS  += -Wnested-externs -fanalyzer
+WARNINGS  += -Wnested-externs -Wno-missing-field-initializers -fanalyzer
 
 CFLAGS    += -D_GNU_SOURCE $(INCS) -MMD -MP -std=c99 -fPIE -fstack-protector
 CFLAGS    += -ftrapv -fno-strict-aliasing -fno-delete-null-pointer-checks
