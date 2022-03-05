@@ -531,18 +531,10 @@ fail:
 		repsize, PACKET_BUF_SIZE(repsize));
 }
 
-struct datagram_handler_args {
-	struct server_ctx *ctx;
-	int fd;
-};
-
 static
 void
-handle_datagram(void *args_void)
+handle_datagram(int fd, struct server_ctx *ctx)
 {
-	struct datagram_handler_args *args = args_void;
-	struct server_ctx *ctx = args->ctx;
-	int fd = args->fd;
 	size_t nread;
 	uint8_t buf[65536] = {0};
 	struct peer *peer;
@@ -626,7 +618,7 @@ handle_datagram(void *args_void)
 	/* printf("nread: %lu\n", nread); */
 
 	if (nread <= PACKET_BUF_SIZE(0))
-		errx(EXIT_FAILURE, "invalid message");
+		errx(EXIT_FAILURE, "invalid message (%lu)", nread);
 
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
@@ -689,42 +681,67 @@ handle_datagram(void *args_void)
 }
 
 static
-void
-stdin_thread(void *unused)
+int
+sztoint(size_t sz)
 {
-	(void)unused;
+	if (sz > INT_MAX)
+		abort();
+	return (int)sz;
 }
 
 static
 void
-handler_thread(void *args_void)
+stdin_thread(int unused1, void *unused2)
 {
-	struct datagram_handler_args *args_ptr = args_void;
-	struct datagram_handler_args args = *args_ptr;
+	unsigned char input[256] = {0};
+	ssize_t n;
+	int flags;
+
+	(void)unused1;
+	(void)unused2;
+
+	flags = fcntl(STDIN_FILENO, F_GETFL);
+	if (flags == -1)
+		err(EXIT_FAILURE, "fcntl(F_GETFL)");
+
+	if (fcntl(STDIN_FILENO, F_SETFL, flags|O_NONBLOCK))
+		err(EXIT_FAILURE, "fcntl(F_SETFL)");
 
 	for (;;) {
-		fibre_awaitfd(args.fd, POLLIN);
-		handle_datagram(&args);
+		n = safe_read(STDIN_FILENO, input, 256);
+		fprintf(stderr, "stdin input: %.*s\n", sztoint(n), input);
 	}
 }
 
 static
 void
-interval_timer_thread(void *ts_void)
+handler_thread(int fd, void *ctx_void)
 {
-	struct timespec *ts = (struct timespec *)ts_void;
+	struct server_ctx *ctx = (struct server_ctx *)ctx_void;
+
+	for (;;) {
+		fibre_awaitfd(fd, EPOLLIN);
+		handle_datagram(fd, ctx);
+	}
+}
+
+static
+void
+interval_timer_thread(int secs, void *unused)
+{
+	struct timespec ts = {(time_t)secs};
 	int fd;
 	uint64_t expirations;
 	ssize_t n;
 
-	fd = timerfd_open(*ts);
+	(void)unused;
+
+	fd = timerfd_open(ts);
 	if (fd == -1)
 		err(EXIT_FAILURE, "timerfd_open");
 
-	free(ts);
-
 	for (;;) {
-		fibre_awaitfd(fd, POLLIN);
+		fibre_awaitfd(fd, EPOLLIN);
 
 		n = read(fd, &expirations, sizeof expirations);
 		if (n == -1 && errno != EAGAIN)
@@ -740,11 +757,9 @@ void
 serve(int argc, char **argv)
 {
 	struct addrinfo hints, *result, *rp;
-	struct timespec *interval;
 	struct server_ctx ctx = {0};
 	const char *host, *port;
 	int fd = -1, gai;
-	struct datagram_handler_args args;
 
 	if (argc < 2 || argc > 4)
 		usage();
@@ -768,7 +783,7 @@ serve(int argc, char **argv)
 			(EXIT_FAILURE, "getaddrinfo: %s", gai_strerror(gai));
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, rp->ai_socktype|O_NONBLOCK, rp->ai_protocol);
+		fd = socket(rp->ai_family, SOCK_NONBLOCK|rp->ai_socktype, rp->ai_protocol);
 		if (fd == -1)
 			continue;
 
@@ -785,21 +800,20 @@ serve(int argc, char **argv)
 	if (rp == NULL)
 		err(EXIT_FAILURE, "Couldn't bind to socket");
 
-	interval = malloc(sizeof *interval);
-	if (interval == NULL)
-		err(EXIT_FAILURE, "Could not allocate timespec `interval'");
-	interval->tv_sec = 10;
-	interval->tv_nsec = 0;
-	fibre_go(interval_timer_thread, interval);
+	fibre_go(FP_HIGH, interval_timer_thread, 10, NULL);
 
-	fibre_go(stdin_thread, NULL);
+	fibre_go(FP_NORMAL, stdin_thread, 0, NULL);
 
-	args = (struct datagram_handler_args){&ctx, fd};
-	fibre_go(handler_thread, &args);
+	/* this is safe, because serve()'s stack frame will live forever.
+	 * However, in general it is not safe to pass pointers into the stack
+	 * as fibre_go arguments unless they are somehow arranged to be yielded
+	 * to before the function calling fibre_go returns.
+	 */
+	fibre_go(FP_NORMAL, handler_thread, fd, &ctx);
 
-	while (fibre_yield())
-		;
 	fibre_return();
+
+	exit(EXIT_SUCCESS);
 }
 
 static
@@ -827,10 +841,13 @@ proof(int argc, char **argv)
 
 	proof_solve(response, challenge, signing_key, signing_key_prv, difficulty);
 
-	if (proof_check(response, challenge, signing_key, difficulty))
+	if (proof_check(response, challenge, signing_key, difficulty)) {
 		fprintf(stderr, "Could not verify challenge response.\n");
-	else
+		exit(EXIT_FAILURE);
+	} else {
 		fprintf(stderr, "Verified proof of work.\n");
+		exit(EXIT_SUCCESS);
+	}
 }
 
 static
@@ -848,44 +865,48 @@ keygen(int argc, char **argv)
 
 	displaykey_short("pub", pub, 32);
 	displaykey_short("prv", prv, 32);
+
+	exit(EXIT_SUCCESS);
 }
 
 static intptr_t counter;
 
 static
 void
-test_fibre(void *_counter)
+test_fibre(int j, void *unused)
 {
 	static int i;
-	intptr_t j = (intptr_t)_counter;
 	struct timespec ts = {0};
 
-	printf("Hello from %ld %d (%d)\n", j, fibre_current(), i);
+	(void)unused;
+
+	printf("Hello from %d %d (%d)\n", j, fibre_current(), i);
 	if (++i < 3) {
-		/* printf("Sleep1 from %ld %d (%d)!\n", j, fibre_current(), i); */
+		/* printf("Sleep1 from %d %d (%d)!\n", j, fibre_current(), i); */
 		/* ts.tv_sec = 1; */
 		/* fibre_sleep(&ts); */
-		printf("Go1 from %ld %d (%d)!\n", j, fibre_current(), i);
-		fibre_go(test_fibre, (void *)(counter++));
-		printf("Sleep2 from %ld %d (%d)!\n", j, fibre_current(), i);
+		printf("Go1 from %d %d (%d)!\n", j, fibre_current(), i);
+		fibre_go(FP_NORMAL, test_fibre, counter++, NULL);
+		printf("Sleep2 from %d %d (%d)!\n", j, fibre_current(), i);
 		ts.tv_sec = 2;
 		fibre_sleep(&ts);
-		printf("Go2 from %ld %d (%d)!\n", j, fibre_current(), i);
-		fibre_go(test_fibre, (void *)(counter++));
+		printf("Go2 from %d %d (%d)!\n", j, fibre_current(), i);
+		fibre_go(FP_NORMAL, test_fibre, counter++, NULL);
 	}
-	printf("Goodbye from %ld %d (%d)\n", j, fibre_current(), i);
+	printf("Goodbye from %d %d (%d)\n", j, fibre_current(), i);
 	fibre_return();
 }
 
 static
 void
-test_fibre2(void *unused)
+test_fibre2(int unused1, void *unused2)
 {
 	int fd;
 	ssize_t nread;
 	char buf[256] = {0};
 
-	(void)unused;
+	(void)unused1;
+	(void)unused2;
 
 	fd = open("example.txt", O_RDWR|O_NONBLOCK);
 	if (fd == -1)
@@ -906,10 +927,12 @@ fibre(int argc, char **argv)
 	(void)argc;
 	(void)argv;
 
-	fibre_go(test_fibre, (void *)(counter++));
-	fibre_go(test_fibre2, NULL);
+	fibre_go(FP_NORMAL, test_fibre, counter++, NULL);
+	fibre_go(FP_HIGH, test_fibre2, 0, NULL);
 	while (fibre_yield());
 	fibre_return();
+
+	exit(EXIT_SUCCESS);
 }
 
 void
@@ -944,5 +967,6 @@ main(int argc, char **argv)
 		default:  usage();
 	}
 
-	return 0;
+	/* the functions dispatched above should not return */
+	exit(EXIT_FAILURE);
 }

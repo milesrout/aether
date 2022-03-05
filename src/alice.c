@@ -74,7 +74,7 @@ alice(int argc, char **argv)
 	/* set up networking */
 	fd = setclientup(host, port);
 	if (fd == -1)
-		exit(EXIT_FAILURE);
+		err(EXIT_FAILURE, "setclientup");
 
 	/* send HELLO message */
 	packet_hshake_cprepare(&state, isks, iks,
@@ -87,15 +87,15 @@ alice(int argc, char **argv)
 	/* recv REPLY message */
 	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
 	if (nread < PACKET_REPLY_SIZE)
-		errg(fail, "Received invalid reply from server.");
+		err(EXIT_FAILURE, "Received invalid reply from server.");
 	if (packet_hshake_cfinish(&state, buf))
-		errg(fail, "Reply message cannot be decrypted.");
+		err(EXIT_FAILURE, "Reply message cannot be decrypted.");
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	/* REGISTER username */
 	randusername(username, "alice");
-	if (register_identity(&state, &ident, fd, buf, username))
-		errg(fail, "Cannot register username %s", username);
+	if (register_identity(&ident, &state, fd, buf, username))
+		err(EXIT_FAILURE, "Cannot register username %s", username);
 
 	/* send LOOKUP */
 	bobstate.username = "bob";
@@ -107,17 +107,17 @@ alice(int argc, char **argv)
 	/* recv LOOKUP reply */
 	nread = safe_read(fd, buf, 65536);
 	if (nread < PACKET_BUF_SIZE(0))
-		errg(fail, "Received a message that is too small.");
+		err(EXIT_FAILURE, "Received a message that is too small.");
 	if (packet_unlock(&state, buf, nread))
-		errg(fail, "Lookup message cannot be decrypted.");
+		err(EXIT_FAILURE, "Lookup message cannot be decrypted.");
 
 	{
 		struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)PACKET_TEXT(buf);
 		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
-			errg(fail, "Identity lookup reply message (%lu) is too small (%lu).",
+			err(EXIT_FAILURE, "Identity lookup reply message (%lu) is too small (%lu).",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_LOOKUP_REP)
-			errg(fail, "Identity lookup reply message has invalid proto or msgtype (%d, %d).",
+			err(EXIT_FAILURE, "Identity lookup reply message has invalid proto or msgtype (%d, %d).",
 				msg->msg.proto, msg->msg.type);
 
 		memcpy(bobstate.key.data, msg->isk, 32);
@@ -134,17 +134,17 @@ alice(int argc, char **argv)
 	/* recv KEYREQ reply */
 	nread = safe_read(fd, buf, 65536);
 	if (nread < PACKET_BUF_SIZE(0))
-		errg(fail, "Received a message that is too small.");
+		err(EXIT_FAILURE, "Received a message that is too small.");
 	if (packet_unlock(&state, buf, nread))
-		errg(fail, "Keyreq message cannot be decrypted.");
+		err(EXIT_FAILURE, "Keyreq message cannot be decrypted.");
 
 	{
 		struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)PACKET_TEXT(buf);
 		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
-			errg(fail, "Key bundle request reply message (%lu) is too small (%lu).",
+			err(EXIT_FAILURE, "Key bundle request reply message (%lu) is too small (%lu).",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_KEYREQ_REP)
-			errg(fail, "Key bundle request reply message has invalid proto or msgtype (%d, %d).",
+			err(EXIT_FAILURE, "Key bundle request reply message has invalid proto or msgtype (%d, %d).",
 				msg->msg.proto, msg->msg.type);
 
 		crypto_from_eddsa_public(ikb, p2pstate->key.data);
@@ -158,13 +158,12 @@ alice(int argc, char **argv)
 	/* Peer-to-peer HELLO */
 	if (packet_hshake_aprepare(&p2pstate->state, ident.ik, ident.ik_prv,
 			p2pstate->key.data, ikb, spkb, spkb_sig, opkb))
-		errg(fail, "Error preparing handshake.");
+		err(EXIT_FAILURE, "Error preparing handshake.");
 
 	/* Send and receive messages */
-	interactive(&ident, &state, &p2ptable, fd, buf);
+	if (interactive(&ident, &state, &p2ptable, fd, buf))
+		err(EXIT_FAILURE, "interactive");
+
 	exit(EXIT_SUCCESS);
-fail:
-	crypto_wipe(buf, 65536);
-	exit(EXIT_FAILURE);
 }
 

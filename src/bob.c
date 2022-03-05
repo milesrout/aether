@@ -46,6 +46,7 @@
 #include "io.h"
 #include "main.h"
 #include "timer.h"
+#include "fibre.h"
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
@@ -68,7 +69,7 @@ handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int
 			continue;
 
 		if (nread < PACKET_BUF_SIZE(0))
-			errg(fail, "Received a message that is too small.");
+			errg(fail, "handle_ident_replies: Received a message that is too small.");
 
 		if (packet_unlock(state, buf, nread))
 			errg(fail, "handle_ident_replies: Message cannot be decrypted.");
@@ -109,12 +110,12 @@ handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int
 				break;
 			}
 			default:
-				fprintf(stderr, "Unrecognised message type %d\n", text[0]);
+				fprintf(stderr, "handle_ident_replies: Unrecognised message type %d\n", text[0]);
 				fprintf(stderr, "(proto,type,len) = (%d,%d,%d)\n",
 					msg->proto, msg->type, load16_le(msg->len));
 				displaykey("buf (decrypted)", buf, nread);
 				displaykey("text", text, size);
-				return -1;
+				goto fail;
 			}
 		}
 	}
@@ -146,6 +147,7 @@ get_username(const char **username_storage, struct packet_state *state, int fd, 
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
+	fibre_awaitfd(fd, EPOLLIN);
 	nread = safe_read(fd, buf, 65536);
 	if (nread < PACKET_BUF_SIZE(0))
 		errg(fail, "Received a message that is too small.");
@@ -181,73 +183,31 @@ fail:
 	return result;
 }
 
-int
-bob(int argc, char **argv)
-{
-	int fd;
-	const char *host, *port;
-	struct packet_state state = {0};
-	struct ident_state ident = {0};
-	struct p2pstate *p2ptable = NULL;
-	uint8_t buf[65536] = {0};
-	size_t nread;
-
-	if (argc < 2 || argc > 4)
-		usage();
-
-	host = argc < 3? "127.0.0.1" : argv[2];
-	port = argc < 4? "3443" : argv[3];
-
-	generate_sig_keypair(ident.isk, ident.isk_prv);
-	crypto_from_eddsa_public(ident.ik,      ident.isk);
-	crypto_from_eddsa_private(ident.ik_prv, ident.isk_prv);
-
-	fd = setclientup(host, port);
-	if (fd == -1)
-		exit(EXIT_FAILURE);
-
-	packet_hshake_cprepare(&state, isks, iks, ident.isk, ident.isk_prv, ident.ik, ident.ik_prv);
-	packet_hshake_chello(&state, buf);
-	safe_write(fd, buf, PACKET_HELLO_SIZE);
-	crypto_wipe(buf, PACKET_HELLO_SIZE);
-
-	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
-	if (nread != PACKET_REPLY_SIZE)
-		errg(fail, "Received invalid REPLY from server.");
-	if (packet_hshake_cfinish(&state, buf))
-		errg(fail, "REPLY message cannot be decrypted.");
-	crypto_wipe(buf, PACKET_REPLY_SIZE);
-
-	if (register_identity(&state, &ident, fd, buf, "bob"))
-		errg(fail, "Cannot register username bob");
-
-	interactive(&ident, &state, &p2ptable, fd, buf);
-	fprintf(stderr, "interactive done.\n");
-
-fail:
-	crypto_wipe(buf, 65536);
-	exit(EXIT_FAILURE);
-}
-
 static
 void
-handle_input(struct packet_state *state, struct p2pstate *p2pstate,
+handle_input(struct packet_state *state, struct p2pstate **p2pstate,
 		int fd, uint8_t *buf)
 {
 	uint8_t text[258] = {0};
 	uint16_t text_size;
 	size_t size;
+	int n;
 
-	fscanf(stdin, "%256[^\n]", text);
+	n = fscanf(stdin, "%256[^\n]", text);
+	while (n == EOF && ferror(stdin) && errno == EAGAIN) {
+		fibre_awaitfd(STDIN_FILENO, EPOLLIN);
+		n = fscanf(stdin, "%256[^\n]", text);
+	}
+
 	getchar();
 
 	fprintf(stderr, "\033[F\b<%s>   %s\n",
-		strcmp(p2pstate->username, "bob") == 0 ? "alice" : "bob",
+		strcmp((*p2pstate)->username, "bob") == 0 ? "alice" : "bob",
 		text);
 
 	text_size = strlen((char*)(text)) + 1;
 
-	size = send_message(state, &p2pstate->state, p2pstate->key.data, buf, text, text_size);
+	size = send_message(state, &(*p2pstate)->state, (*p2pstate)->key.data, buf, text, text_size);
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 }
@@ -455,7 +415,7 @@ handle_packet(struct ident_state *ident, struct packet_state *state,
 {
 	size_t nread;
 
-	while ((nread = safe_read_nonblock(fd, buf, 65536))) {
+	while ((nread = safe_read(fd, buf, 65536))) {
 		struct msg *msg = (struct msg *)PACKET_TEXT(buf);
 
 		if (nread < PACKET_BUF_SIZE(sizeof(struct msg)))
@@ -501,47 +461,91 @@ handle_packet(struct ident_state *ident, struct packet_state *state,
 	}
 }
 
-void
-interactive(struct ident_state *ident, struct packet_state *state, struct p2pstate **p2ptable, int fd, uint8_t buf[65536])
-{
-	struct timespec fivesec = {5};
-	int timerfd;
-	struct pollfd pfds[] = {
-		{STDIN_FILENO, POLLIN},
-		{fd, POLLIN},
-		{0, POLLIN},
-	};
+struct client_ctx {
+	struct ident_state *ident;
+	struct packet_state *state;
+	struct p2pstate **p2ptable;
+};
 
-	pfds[2].fd = timerfd = timerfd_open(fivesec);
+static
+void
+fetch_thread(int fd, void *arg)
+{
+	struct client_ctx *ctx = (struct client_ctx *)arg;
+	struct timespec ts = {15};
+	uint64_t expirations;
+	uint8_t buf[1024];
+	size_t size;
+	int timerfd;
+	ssize_t n;
+
+	timerfd = timerfd_open(ts);
 	if (timerfd == -1)
 		err(EXIT_FAILURE, "timerfd_open");
 
-	while (1) {
-		int pcount = poll(pfds, 2, 5000);
-		if (pcount == -1)
-			err(EXIT_FAILURE, "poll");
+	for (;;) {
+		do n = fibre_read(timerfd, &expirations, sizeof expirations);
+		while (n == -1 && errno == EINTR);
+		if (n == -1)
+			warn("Could not read timer expirations");
 
-		if (pcount == 0) {
-			size_t size = msg_fetch_init(buf);
-			packet_lock(state, buf, size);
-			safe_write(fd, buf, PACKET_BUF_SIZE(size));
-			crypto_wipe(buf, PACKET_BUF_SIZE(size));
-			continue;
-		}
+		size = msg_fetch_init(buf);
+		packet_lock(ctx->state, buf, size);
+		safe_write(fd, buf, PACKET_BUF_SIZE(size));
+		crypto_wipe(buf, PACKET_BUF_SIZE(size));
+	}
+}
 
-		if (pfds[0].revents & (POLLERR|POLLHUP|POLLNVAL))
-			err(EXIT_FAILURE, "poll");
-		if (pfds[1].revents & (POLLERR|POLLHUP|POLLNVAL))
-			err(EXIT_FAILURE, "poll");
-		if (pfds[0].revents & POLLIN)
-			handle_input(state, *p2ptable, fd, buf);
-		if (pfds[1].revents & POLLIN)
-			handle_packet(ident, state, p2ptable, fd, buf);
+static
+void
+input_thread(int fd, void *arg)
+{
+	struct client_ctx *ctx = (struct client_ctx *)arg;
+	uint8_t buf[65536];
+
+	fcntl_nonblock(STDIN_FILENO);
+
+	for (;;) {
+		handle_input(ctx->state, ctx->p2ptable, fd, buf);
+	}
+}
+
+static
+void
+handler_thread(int fd, void *arg)
+{
+	struct client_ctx *ctx = (struct client_ctx *)arg;
+	uint8_t buf[65536];
+
+	for (;;) {
+		handle_packet(ctx->ident, ctx->state, ctx->p2ptable, fd, buf);
 	}
 }
 
 int
-register_identity(struct packet_state *state, struct ident_state *ident,
+interactive(struct ident_state *ident, struct packet_state *state,
+		struct p2pstate **p2ptable, int fd, uint8_t buf[65536])
+{
+	int dupfd1, dupfd2;
+	struct client_ctx ctx = {ident, state, p2ptable};
+ 
+	dupfd1 = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	if (dupfd1 == -1)
+		err(EXIT_FAILURE, "fcntl(F_DUPFD_CLOEXEC)");
+
+	dupfd2 = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	if (dupfd2 == -1)
+		err(EXIT_FAILURE, "fcntl(F_DUPFD_CLOEXEC)");
+
+	fibre_go(FP_BACKGROUND, fetch_thread, fd, &ctx);
+	fibre_go(FP_NORMAL, input_thread, dupfd1, &ctx);
+	fibre_go(FP_NORMAL, handler_thread, dupfd2, &ctx);
+
+	fibre_return();
+}
+
+int
+register_identity(struct ident_state *ident, struct packet_state *state,
 		int fd, uint8_t buf[65536], const char *name)
 {
 	size_t size;
@@ -578,4 +582,50 @@ register_identity(struct packet_state *state, struct ident_state *ident,
 	}
 
 	return 0;
+}
+
+int
+bob(int argc, char **argv)
+{
+	int fd;
+	const char *host, *port;
+	struct packet_state state = {0};
+	struct ident_state ident = {0};
+	struct p2pstate *p2ptable = NULL;
+	uint8_t buf[65536] = {0};
+	size_t nread;
+
+	if (argc < 2 || argc > 4)
+		usage();
+
+	host = argc < 3? "127.0.0.1" : argv[2];
+	port = argc < 4? "3443" : argv[3];
+
+	generate_sig_keypair(ident.isk, ident.isk_prv);
+	crypto_from_eddsa_public(ident.ik,      ident.isk);
+	crypto_from_eddsa_private(ident.ik_prv, ident.isk_prv);
+
+	fd = setclientup(host, port);
+	if (fd == -1)
+		err(EXIT_FAILURE, "Could not set client up");
+
+	packet_hshake_cprepare(&state, isks, iks, ident.isk, ident.isk_prv, ident.ik, ident.ik_prv);
+	packet_hshake_chello(&state, buf);
+	safe_write(fd, buf, PACKET_HELLO_SIZE);
+	crypto_wipe(buf, PACKET_HELLO_SIZE);
+
+	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
+	if (nread != PACKET_REPLY_SIZE)
+		errx(EXIT_FAILURE, "Received invalid REPLY from server.");
+	if (packet_hshake_cfinish(&state, buf))
+		errx(EXIT_FAILURE, "REPLY message cannot be decrypted.");
+	crypto_wipe(buf, PACKET_REPLY_SIZE);
+
+	if (register_identity(&ident, &state, fd, buf, "bob"))
+		errx(EXIT_FAILURE, "Cannot register username bob");
+
+	if (interactive(&ident, &state, &p2ptable, fd, buf))
+		errx(EXIT_FAILURE, "interactive");
+
+	exit(EXIT_SUCCESS);
 }

@@ -72,10 +72,9 @@ fibre_sleep(const struct timespec *duration)
 	if (timerfd_settime(fd, 0, &timer, NULL))
 		err(EXIT_FAILURE, "fibre_sleep: Could not set timer on timerfd");
 
-	result = fibre_awaitfd(fd, POLLIN);
+	result = fibre_awaitfd(fd, EPOLLIN);
 
-	if (close(fd))
-		warn("fibre_sleep: Could not close timerfd");
+	fibre_close(fd);
 
 	return result;
 }

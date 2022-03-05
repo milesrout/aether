@@ -47,7 +47,7 @@ setclientup(const char *addr, const char *port)
 	}
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		fd = socket(rp->ai_family, SOCK_NONBLOCK|rp->ai_socktype, rp->ai_protocol);
 		if (fd == -1)
 			continue;
 
@@ -68,6 +68,21 @@ setclientup(const char *addr, const char *port)
 
 	fprintf(stderr, "Couldn't connect to %s on port %s.\n", addr, port);
 	return -1;
+}
+
+int
+fcntl_nonblock(int fd)
+{
+	int flags;
+
+	flags = fcntl(fd, F_GETFL);
+	if (flags == -1)
+		err(EXIT_FAILURE, "fcntl_nonblock: fcntl(F_GETFL)");
+
+	if (fcntl(fd, F_SETFL, flags|O_NONBLOCK))
+		err(EXIT_FAILURE, "fcntl_nonblock: fcntl(F_SETFL)");
+
+	return 0;
 }
 
 
@@ -183,10 +198,8 @@ safe_write(int fd, const uint8_t *buf, size_t size)
 {
 	ssize_t result;
 
-	do {
-		result = fibre_write(fd, buf, size);
-		fibre_yield();
-	} while (result == -1 && errno == EINTR);
+	do result = fibre_write(fd, buf, size);
+	while (result == -1 && errno == EINTR);
 	if (result == -1)
 		err(EXIT_FAILURE, "Could not write to socket.");
 }

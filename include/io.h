@@ -14,6 +14,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+extern int fcntl_nonblock(int fd);
 extern struct sockaddr *sstosa(struct sockaddr_storage *ss);
 extern size_t safe_read(int fd, uint8_t *buf, size_t max_size_p1);
 extern size_t safe_read_nonblock(int fd, uint8_t *buf, size_t max_size_p1);

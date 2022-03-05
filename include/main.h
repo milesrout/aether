@@ -22,8 +22,9 @@ struct p2pstate {
 extern void usage(void);
 extern int alice(int argc, char **argv);
 extern int bob(int argc, char **argv);
-extern void interactive(struct ident_state *ident,
+extern int interactive(struct ident_state *ident,
 	struct packet_state *state, struct p2pstate **p2ptable,
 	int fd, uint8_t buf[65536]);
-extern int register_identity(struct packet_state *state, struct ident_state *ident,
+extern int register_identity(struct ident_state *ident,
+	struct packet_state *state,
 	int fd, uint8_t buf[65536], const char *name);

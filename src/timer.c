@@ -15,7 +15,7 @@ timerfd_open(struct timespec ts)
 	int fd;
 	struct itimerspec timer;
 
-	fd = timerfd_create(CLOCK_MONOTONIC, O_NONBLOCK);
+	fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK|TFD_CLOEXEC);
 	if (fd == -1)
 		err(EXIT_FAILURE, "Could not create fd");
 
