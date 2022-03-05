@@ -47,7 +47,8 @@ setclientup(const char *addr, const char *port)
 	}
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		fd = socket(rp->ai_family, SOCK_NONBLOCK|rp->ai_socktype, rp->ai_protocol);
+		fd = socket(rp->ai_family, SOCK_NONBLOCK|rp->ai_socktype,
+			rp->ai_protocol);
 		if (fd == -1)
 			continue;
 

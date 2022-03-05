@@ -21,7 +21,7 @@ struct peer {
 	char                    host[NI_MAXHOST];
 	char                    service[NI_MAXSERV];
 	uint64_t		hash;
-	struct packet_state     state;
+	union packet_state      state;
 };
 enum peer_status {
 	PEER_NEW,		/* the initial state of all peers */

@@ -104,15 +104,13 @@ struct packet_ratchet_astate_prerecv {
 	uint8_t spkb[32];
 	uint8_t opkb[32];
 };
-struct packet_state {
-	union {
-		struct packet_hshake_bstate hsb;
-		struct packet_hshake_cstate hsc;
-		struct packet_hshake_dstate hsd;
-		struct packet_ratchet_state ra;
-		struct packet_ratchet_dstate rad;
-		struct packet_ratchet_astate_prerecv rap;
-	} u;
+union packet_state {
+	struct packet_hshake_bstate hsb;
+	struct packet_hshake_cstate hsc;
+	struct packet_hshake_dstate hsd;
+	struct packet_ratchet_state ra;
+	struct packet_ratchet_dstate rad;
+	struct packet_ratchet_astate_prerecv rap;
 };
 struct hshake_hello_msg {
 	uint8_t hidden[32];
@@ -146,39 +144,39 @@ struct hshake_omsg_msg {
 #define PACKET_P2PHELLO_SIZE(n) (sizeof(struct hshake_ohello_msg) + (n))
 /* PACKET_HSHAKE_SIZE = MAX( PACKET_{HELLO,REPLY}_SIZE ) */
 #define PACKET_HSHAKE_SIZE PACKET_HELLO_SIZE
-extern void packet_get_iskc(uint8_t iskc[32], const struct packet_state *state);
-extern int packet_hshake_aprepare(struct packet_state *state,
+extern void packet_get_iskc(uint8_t iskc[32], const union packet_state *state);
+extern int packet_hshake_aprepare(union packet_state *state,
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
 	const uint8_t his_sign_public_key[32], const uint8_t his_public_key[32],
 	const uint8_t his_signed_prekey[32], const uint8_t his_signed_prekey_sig[64],
 	const uint8_t his_onetime_prekey[32]);
-extern void packet_hshake_ahello(struct packet_state *state, uint8_t *buf, size_t msgsize);
-extern void packet_hshake_bprepare(struct packet_state *state,
+extern void packet_hshake_ahello(union packet_state *state, uint8_t *buf, size_t msgsize);
+extern void packet_hshake_bprepare(union packet_state *state,
 	const uint8_t her_kex_public_key[32], const uint8_t her_ephemeral_key[32],
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
 	const uint8_t signed_prekey[32], const uint8_t signed_prekey_private[32],
 	const uint8_t onetime_prekey[32], const uint8_t onetime_prekey_private[32]);
-extern int packet_hshake_bfinish(struct packet_state *state, uint8_t *buf, size_t size);
-extern void packet_hshake_cprepare(struct packet_state *state,
+extern int packet_hshake_bfinish(union packet_state *state, uint8_t *buf, size_t size);
+extern void packet_hshake_cprepare(union packet_state *state,
 	const uint8_t his_sign_public_key[32], const uint8_t his_kex_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
-extern void packet_hshake_chello(struct packet_state *state, uint8_t buf[PACKET_HELLO_SIZE]);
-extern int packet_hshake_cfinish(struct packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]);
-extern void packet_hshake_dprepare(struct packet_state *state,
+extern void packet_hshake_chello(union packet_state *state, uint8_t buf[PACKET_HELLO_SIZE]);
+extern int packet_hshake_cfinish(union packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]);
+extern void packet_hshake_dprepare(union packet_state *state,
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
-extern int packet_hshake_dcheck(struct packet_state *state, uint8_t buf[PACKET_HELLO_SIZE]);
-extern void packet_hshake_dreply(struct packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]);
-extern void packet_lock(struct packet_state *state, uint8_t *buf, size_t text_size);
-extern int packet_unlock(struct packet_state *state, uint8_t *buf, size_t buf_size);
-extern size_t send_ohello_message(struct packet_state *state,
-	struct packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
+extern int packet_hshake_dcheck(union packet_state *state, uint8_t buf[PACKET_HELLO_SIZE]);
+extern void packet_hshake_dreply(union packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]);
+extern void packet_lock(union packet_state *state, uint8_t *buf, size_t text_size);
+extern int packet_unlock(union packet_state *state, uint8_t *buf, size_t buf_size);
+extern size_t send_ohello_message(union packet_state *state,
+	union packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
 	const uint8_t *text, size_t text_size);
-extern size_t send_omsg_message(struct packet_state *state,
-	struct packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
+extern size_t send_omsg_message(union packet_state *state,
+	union packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
 	const uint8_t *text, size_t text_size);
-extern size_t send_message(struct packet_state *state,
-	struct packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
+extern size_t send_message(union packet_state *state,
+	union packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
 	const uint8_t *text, size_t text_size);
 extern size_t padme_enc(size_t l);

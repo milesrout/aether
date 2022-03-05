@@ -99,9 +99,9 @@ padme_enc(size_t l)
 }
 
 void
-packet_get_iskc(uint8_t iskc[32], const struct packet_state *state)
+packet_get_iskc(uint8_t iskc[32], const union packet_state *state)
 {
-	memcpy(iskc, state->u.rad.iskc, 32);
+	memcpy(iskc, state->rad.iskc, 32);
 }
 
 static void offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32], uint8_t *dh, size_t dh_size);
@@ -514,24 +514,24 @@ hshake_compute_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 }
 
 void
-packet_lock(struct packet_state *state, uint8_t *buf, size_t text_size)
+packet_lock(union packet_state *state, uint8_t *buf, size_t text_size)
 {
-	encrypt_message(&state->u.ra.rac, (struct packet *)buf, text_size);
+	encrypt_message(&state->ra.rac, (struct packet *)buf, text_size);
 }
 
 int
-packet_unlock(struct packet_state *state, uint8_t *buf, size_t buf_size)
+packet_unlock(union packet_state *state, uint8_t *buf, size_t buf_size)
 {
-	return try_decrypt_message(&state->u.ra.rac,
+	return try_decrypt_message(&state->ra.rac,
 		(struct packet *)buf, buf_size - sizeof(struct packet));
 }
 
 void
-packet_hshake_dprepare(struct packet_state *state,
+packet_hshake_dprepare(union packet_state *state,
 		const uint8_t iskd[32], const uint8_t iskd_prv[32],
 		const uint8_t ikd[32], const uint8_t ikd_prv[32])
 {
-	struct packet_hshake_dstate *hsd = &state->u.hsd;
+	struct packet_hshake_dstate *hsd = &state->hsd;
 
 	crypto_wipe(state, sizeof *state);
 
@@ -544,12 +544,12 @@ packet_hshake_dprepare(struct packet_state *state,
 }
 
 void
-packet_hshake_cprepare(struct packet_state *state,
+packet_hshake_cprepare(union packet_state *state,
 		const uint8_t iskd[32], const uint8_t ikd[32],
 		const uint8_t iskc[32], const uint8_t iskc_prv[32],
 		const uint8_t ikc[32], const uint8_t ikc_prv[32])
 {
-	struct packet_hshake_cstate *hsc = &state->u.hsc;
+	struct packet_hshake_cstate *hsc = &state->hsc;
 
 	crypto_wipe(state, sizeof *state);
 
@@ -582,9 +582,9 @@ hello_compute_shared_secrets(uint8_t hk[32], uint8_t rk[32],
 }
 
 void
-packet_hshake_chello(struct packet_state *state, uint8_t buf[PACKET_HELLO_SIZE])
+packet_hshake_chello(union packet_state *state, uint8_t buf[PACKET_HELLO_SIZE])
 {
-	struct packet_hshake_cstate *hsc = &state->u.hsc;
+	struct packet_hshake_cstate *hsc = &state->hsc;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
 	uint8_t hellokey[32];
 
@@ -630,13 +630,13 @@ try_decrypt_hello(struct packet_hshake_dstate *hsd, struct hshake_hello_msg *hel
 }
 
 void
-packet_hshake_bprepare(struct packet_state *state,
+packet_hshake_bprepare(union packet_state *state,
 	const uint8_t ika[32], const uint8_t eka[32],
 	const uint8_t ikb[32],  const uint8_t ikb_prv[32],
 	const uint8_t spkb[32], const uint8_t spkb_prv[32],
 	const uint8_t opkb[32], const uint8_t opkb_prv[32])
 {
-	struct packet_ratchet_state_common *ra = &state->u.ra.rac;
+	struct packet_ratchet_state_common *ra = &state->ra.rac;
 	uint8_t dh[128];
 
 	crypto_wipe(state, sizeof *state);
@@ -659,15 +659,15 @@ packet_hshake_bprepare(struct packet_state *state,
 }
 
 int
-packet_hshake_bfinish(struct packet_state *state, uint8_t *buf, size_t size)
+packet_hshake_bfinish(union packet_state *state, uint8_t *buf, size_t size)
 {
 	return packet_unlock(state, buf, size);
 }
 
 int
-packet_hshake_dcheck(struct packet_state *state, uint8_t buf[PACKET_HELLO_SIZE])
+packet_hshake_dcheck(union packet_state *state, uint8_t buf[PACKET_HELLO_SIZE])
 {
-	struct packet_hshake_dstate *hsd = &state->u.hsd;
+	struct packet_hshake_dstate *hsd = &state->hsd;
 	struct hshake_hello_msg *hellomsg = (struct hshake_hello_msg *)buf;
 
 	if (try_decrypt_hello(hsd, hellomsg))
@@ -682,11 +682,11 @@ packet_hshake_dcheck(struct packet_state *state, uint8_t buf[PACKET_HELLO_SIZE])
 }
 
 void
-packet_hshake_dreply(struct packet_state *state, uint8_t buf[PACKET_REPLY_SIZE])
+packet_hshake_dreply(union packet_state *state, uint8_t buf[PACKET_REPLY_SIZE])
 {
-	struct packet_hshake_dstate *hsd = &state->u.hsd;
-	struct packet_ratchet_dstate *rad = &state->u.rad;
-	struct packet_ratchet_state_common *ra = &state->u.rad.rac;
+	struct packet_hshake_dstate *hsd = &state->hsd;
+	struct packet_ratchet_dstate *rad = &state->rad;
+	struct packet_ratchet_state_common *ra = &state->rad.rac;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh[128];
 	uint8_t iskc[32], ikc[32], ikd[32], ekd_prv[32];
@@ -751,10 +751,10 @@ try_decrypt_reply(struct packet_hshake_cstate *hsc, struct hshake_reply_msg *rep
 }
 
 int
-packet_hshake_cfinish(struct packet_state *state, uint8_t buf[PACKET_REPLY_SIZE])
+packet_hshake_cfinish(union packet_state *state, uint8_t buf[PACKET_REPLY_SIZE])
 {
-	struct packet_hshake_cstate *hsc = &state->u.hsc;
-	struct packet_ratchet_state_common *ra = &state->u.ra.rac;
+	struct packet_hshake_cstate *hsc = &state->hsc;
+	struct packet_ratchet_state_common *ra = &state->ra.rac;
 	struct hshake_reply_msg *replymsg = (struct hshake_reply_msg *)buf;
 	uint8_t dh_hs[128];
 	uint8_t dh_ra[32];
@@ -773,7 +773,7 @@ packet_hshake_cfinish(struct packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]
 	memcpy(ikd, hsc->ikd, 32);
 
 	/* switch from hshake state to ratchet state */
-	crypto_wipe(state, sizeof(struct packet_state));
+	crypto_wipe(state, sizeof(union packet_state));
 
 	hshake_compute_shared_secrets(ra->rk, ra->nhkr, ra->hks, dh_hs);
 	generate_kex_keypair(ra->dhks, ra->dhks_prv);
@@ -814,13 +814,13 @@ offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32],
 }
 
 int
-packet_hshake_aprepare(struct packet_state *state,
+packet_hshake_aprepare(union packet_state *state,
 	const uint8_t ika[32], const uint8_t ika_prv[32],
 	const uint8_t iskb[32], const uint8_t ikb[32],
 	const uint8_t spkb[32], const uint8_t spkb_sig[64],
 	const uint8_t opkb[32])
 {
-	struct packet_ratchet_astate_prerecv *rap = &state->u.rap;
+	struct packet_ratchet_astate_prerecv *rap = &state->rap;
 	struct packet_ratchet_state_common *ra = &rap->rac;
 	uint8_t dh[128];
 	uint8_t hk[32];
@@ -863,10 +863,10 @@ packet_hshake_aprepare(struct packet_state *state,
 }
 
 void
-packet_hshake_ahello(struct packet_state *state, uint8_t *buf, size_t msgsize)
+packet_hshake_ahello(union packet_state *state, uint8_t *buf, size_t msgsize)
 {
 	struct hshake_ohello_msg *msg = (struct hshake_ohello_msg *)buf;
-	struct packet_ratchet_astate_prerecv *rap = &state->u.rap;
+	struct packet_ratchet_astate_prerecv *rap = &state->rap;
 
 	msg->msgtype = 0;
 	memcpy(msg->eka, rap->eka, 32);
@@ -883,7 +883,7 @@ packet_hshake_ahello(struct packet_state *state, uint8_t *buf, size_t msgsize)
 }
 
 size_t
-send_ohello_message(struct packet_state *state, struct packet_state *p2pstate,
+send_ohello_message(union packet_state *state, union packet_state *p2pstate,
 		uint8_t recipient_isk[32], uint8_t *buf,
 		const uint8_t *text, size_t text_size)
 {
@@ -918,7 +918,7 @@ send_ohello_message(struct packet_state *state, struct packet_state *p2pstate,
 }
 
 size_t
-send_omsg_message(struct packet_state *state, struct packet_state *p2pstate,
+send_omsg_message(union packet_state *state, union packet_state *p2pstate,
 		uint8_t recipient_isk[32], uint8_t *buf,
 		const uint8_t *text, size_t text_size)
 {
@@ -951,10 +951,10 @@ send_omsg_message(struct packet_state *state, struct packet_state *p2pstate,
 }
 
 size_t
-send_message(struct packet_state *state, struct packet_state *p2pstate,
+send_message(union packet_state *state, union packet_state *p2pstate,
 		uint8_t recipient_isk[32], uint8_t *buf,
 		const uint8_t *text, size_t text_size)
 {
-	return (p2pstate->u.ra.rac.prerecv ? send_ohello_message : send_omsg_message)
+	return (p2pstate->ra.rac.prerecv ? send_ohello_message : send_omsg_message)
 		(state, p2pstate, recipient_isk, buf, text, text_size);
 }

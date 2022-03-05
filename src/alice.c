@@ -14,6 +14,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -38,7 +39,7 @@
 #include "isks.h"
 
 extern int handle_ident_replies(int fd, uint8_t buf[65536],
-	struct packet_state *state, int minreplies);
+	union packet_state *state, int minreplies);
 
 int
 alice(int argc, char **argv)
@@ -46,15 +47,16 @@ alice(int argc, char **argv)
 	int fd;
 	uint8_t ikb[32], spkb[32], opkb[32];
 	uint8_t spkb_sig[64];
-	struct packet_state state;
+	union packet_state state;
 	struct p2pstate *p2ptable = NULL;
 	struct p2pstate *p2pstate;
 	struct p2pstate bobstate = {0};
 	struct ident_state ident = {0};
 	const char *host, *port;
 	uint8_t buf[65536] = {0};
-	char username[12] = {0};
-	size_t nread, size;
+	char *username = NULL;
+	size_t nread, size, username_len;
+	ssize_t iread;
 
 	/* argument handling */
 	if (argc < 2 || argc > 4)
@@ -84,13 +86,21 @@ alice(int argc, char **argv)
 	/* recv REPLY message */
 	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
 	if (nread < PACKET_REPLY_SIZE)
-		err(EXIT_FAILURE, "Received invalid reply from server.");
+		err(EXIT_FAILURE, "Received invalid reply from server");
 	if (packet_hshake_cfinish(&state, buf))
-		err(EXIT_FAILURE, "Reply message cannot be decrypted.");
+		err(EXIT_FAILURE, "Reply message cannot be decrypted");
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	/* REGISTER username */
-	randusername(username, "alice");
+	printf("Username: ");
+	if ((iread = getline(&username, &username_len, stdin)) == -1)
+		err(EXIT_FAILURE, "Could not read username");
+
+	assert(username[iread - 1] == '\n');
+	assert(username[iread] == '\0');
+	username[iread - 1] = '\0';
+
+	/* randusername(username, "alice"); */
 	if (register_identity(&ident, &state, fd, buf, username))
 		err(EXIT_FAILURE, "Cannot register username %s", username);
 
@@ -158,7 +168,7 @@ alice(int argc, char **argv)
 		err(EXIT_FAILURE, "Error preparing handshake.");
 
 	/* Send and receive messages */
-	if (interactive(&ident, &state, &p2ptable, fd, buf))
+	if (interactive(&ident, &state, &p2ptable, fd, username))
 		err(EXIT_FAILURE, "interactive");
 
 	exit(EXIT_SUCCESS);

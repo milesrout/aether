@@ -54,10 +54,10 @@
 static
 uint8_t zero_key[32] = {0};
 
-int handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int minreplies);
+int handle_ident_replies(int fd, uint8_t buf[65536], union packet_state *state, int minreplies);
 
 int
-handle_ident_replies(int fd, uint8_t buf[65536], struct packet_state *state, int minreplies)
+handle_ident_replies(int fd, uint8_t buf[65536], union packet_state *state, int minreplies)
 {
 	size_t nread;
 
@@ -131,7 +131,7 @@ fail:
 
 static
 int
-get_username(const char **username_storage, struct packet_state *state, int fd, uint8_t isk[32])
+get_username(const char **username_storage, union packet_state *state, int fd, uint8_t isk[32])
 {
 	size_t size, nread;
 	int result = -1;
@@ -185,8 +185,8 @@ fail:
 
 static
 void
-handle_input(struct packet_state *state, struct p2pstate **p2pstate,
-		int fd, uint8_t *buf)
+handle_input(union packet_state *state, struct p2pstate **p2pstate,
+		int fd, uint8_t *buf, const char *username)
 {
 	uint8_t text[258] = {0};
 	uint16_t text_size;
@@ -201,9 +201,7 @@ handle_input(struct packet_state *state, struct p2pstate **p2pstate,
 
 	getchar();
 
-	fprintf(stderr, "\033[F\b<%s>   %s\n",
-		strcmp((*p2pstate)->username, "bob") == 0 ? "alice" : "bob",
-		text);
+	fprintf(stderr, "\033[F\b<%s> %s\n", username, text);
 
 	text_size = strlen((char*)(text)) + 1;
 
@@ -214,7 +212,7 @@ handle_input(struct packet_state *state, struct p2pstate **p2pstate,
 
 static
 int
-try_unlock_raw_message(struct packet_state *p2pstate,
+try_unlock_raw_message(union packet_state *p2pstate,
 		struct msg_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
@@ -232,7 +230,7 @@ try_unlock_raw_message(struct packet_state *p2pstate,
 
 static
 int
-try_unlock_prefixed_message(struct packet_state *p2pstate,
+try_unlock_prefixed_message(union packet_state *p2pstate,
 		struct msg_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
@@ -251,7 +249,7 @@ try_unlock_prefixed_message(struct packet_state *p2pstate,
 
 static
 int
-try_unlock_hshake_message(struct ident_state *ident, struct packet_state *p2pstate,
+try_unlock_hshake_message(struct ident_state *ident, union packet_state *p2pstate,
 		struct msg_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
@@ -326,7 +324,7 @@ fail:
 
 static
 int
-handle_message(struct ident_state *ident, struct packet_state *state,
+handle_message(struct ident_state *ident, union packet_state *state,
 		struct p2pstate **p2ptable, int fd, uint8_t *buf)
 {
 	struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)PACKET_TEXT(buf);
@@ -354,7 +352,6 @@ handle_message(struct ident_state *ident, struct packet_state *state,
 		struct msg_fetch_content_msg *content = (struct msg_fetch_content_msg *)message;
 		struct key key;
 		struct p2pstate *p2pstate;
-		char message_icon = ' ';
 		const char *text;
 		size_t text_size;
 
@@ -378,26 +375,20 @@ handle_message(struct ident_state *ident, struct packet_state *state,
 			p2pstate = &(*p2ptable)[stbds_hmlen(*p2ptable) - 1];
 		}
 
-		if (!try_unlock_raw_message(&p2pstate->state, content, &text, &text_size)) {
-			message_icon = ' ';
+		if (!try_unlock_raw_message(&p2pstate->state, content, &text, &text_size)) 
 			goto done;
-		}
 
-		if (!try_unlock_prefixed_message(&p2pstate->state, content, &text, &text_size)) {
-			message_icon = '!';
+		if (!try_unlock_prefixed_message(&p2pstate->state, content, &text, &text_size)) 
 			goto done;
-		}
 
-		if (!try_unlock_hshake_message(ident, &p2pstate->state, content, &text, &text_size)) {
-			message_icon = '~';
+		if (!try_unlock_hshake_message(ident, &p2pstate->state, content, &text, &text_size))
 			goto done;
-		}
 
 		fprintf(stderr, "handle_message: Failed to decrypt!\n");
 		goto fail;
 
 	done:
-		fprintf(stderr, "<%s> %c %.*s\n", p2pstate->username, message_icon, (int)text_size, text);
+		fprintf(stderr, "<%s> %.*s\n", p2pstate->username, (int)text_size, text);
 		total_size += MSG_FETCH_CONTENT_SIZE(load16_le(content->len));
 		message += MSG_FETCH_CONTENT_SIZE(load16_le(content->len));
 	}
@@ -410,7 +401,7 @@ fail:
 
 static
 void
-handle_packet(struct ident_state *ident, struct packet_state *state,
+handle_packet(struct ident_state *ident, union packet_state *state,
 		struct p2pstate **p2ptable, int fd, uint8_t *buf)
 {
 	size_t nread;
@@ -463,8 +454,9 @@ handle_packet(struct ident_state *ident, struct packet_state *state,
 
 struct client_ctx {
 	struct ident_state *ident;
-	struct packet_state *state;
+	union packet_state *state;
 	struct p2pstate **p2ptable;
+	const char *username;
 };
 
 static
@@ -506,7 +498,7 @@ input_thread(int fd, void *arg)
 	fcntl_nonblock(STDIN_FILENO);
 
 	for (;;) {
-		handle_input(ctx->state, ctx->p2ptable, fd, buf);
+		handle_input(ctx->state, ctx->p2ptable, fd, buf, ctx->username);
 	}
 }
 
@@ -523,11 +515,11 @@ handler_thread(int fd, void *arg)
 }
 
 int
-interactive(struct ident_state *ident, struct packet_state *state,
-		struct p2pstate **p2ptable, int fd, uint8_t buf[65536])
+interactive(struct ident_state *ident, union packet_state *state,
+		struct p2pstate **p2ptable, int fd, const char *username)
 {
 	int dupfd1, dupfd2;
-	struct client_ctx ctx = {ident, state, p2ptable};
+	struct client_ctx ctx = {ident, state, p2ptable, username};
  
 	dupfd1 = fcntl(fd, F_DUPFD_CLOEXEC, 0);
 	if (dupfd1 == -1)
@@ -545,7 +537,7 @@ interactive(struct ident_state *ident, struct packet_state *state,
 }
 
 int
-register_identity(struct ident_state *ident, struct packet_state *state,
+register_identity(struct ident_state *ident, union packet_state *state,
 		int fd, uint8_t buf[65536], const char *name)
 {
 	size_t size;
@@ -589,7 +581,7 @@ bob(int argc, char **argv)
 {
 	int fd;
 	const char *host, *port;
-	struct packet_state state = {0};
+	union packet_state state = {0};
 	struct ident_state ident = {0};
 	struct p2pstate *p2ptable = NULL;
 	uint8_t buf[65536] = {0};
@@ -624,7 +616,7 @@ bob(int argc, char **argv)
 	if (register_identity(&ident, &state, fd, buf, "bob"))
 		errx(EXIT_FAILURE, "Cannot register username bob");
 
-	if (interactive(&ident, &state, &p2ptable, fd, buf))
+	if (interactive(&ident, &state, &p2ptable, fd, "bob"))
 		errx(EXIT_FAILURE, "interactive");
 
 	exit(EXIT_SUCCESS);
