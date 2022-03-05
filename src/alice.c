@@ -114,17 +114,17 @@ alice(int argc, char **argv)
 	/* recv LOOKUP reply */
 	nread = safe_read(fd, buf, 65536);
 	if (nread < PACKET_BUF_SIZE(0))
-		err(EXIT_FAILURE, "Received a message that is too small.");
+		err(EXIT_FAILURE, "Received a message that is too small");
 	if (packet_unlock(&state, buf, nread))
-		err(EXIT_FAILURE, "Lookup message cannot be decrypted.");
+		err(EXIT_FAILURE, "Lookup message cannot be decrypted");
 
 	{
 		struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)PACKET_TEXT(buf);
 		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
-			err(EXIT_FAILURE, "Identity lookup reply message (%lu) is too small (%lu).",
+			err(EXIT_FAILURE, "Identity lookup reply message (%lu) is too small (%lu)",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_LOOKUP_REP)
-			err(EXIT_FAILURE, "Identity lookup reply message has invalid proto or msgtype (%d, %d).",
+			err(EXIT_FAILURE, "Identity lookup reply message has invalid proto or msgtype (%d, %d)",
 				msg->msg.proto, msg->msg.type);
 
 		memcpy(bobstate.key.data, msg->isk, 32);
@@ -141,17 +141,17 @@ alice(int argc, char **argv)
 	/* recv KEYREQ reply */
 	nread = safe_read(fd, buf, 65536);
 	if (nread < PACKET_BUF_SIZE(0))
-		err(EXIT_FAILURE, "Received a message that is too small.");
+		err(EXIT_FAILURE, "Received a message that is too small");
 	if (packet_unlock(&state, buf, nread))
-		err(EXIT_FAILURE, "Keyreq message cannot be decrypted.");
+		err(EXIT_FAILURE, "Keyreq message cannot be decrypted");
 
 	{
 		struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)PACKET_TEXT(buf);
 		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
-			err(EXIT_FAILURE, "Key bundle request reply message (%lu) is too small (%lu).",
+			err(EXIT_FAILURE, "Key bundle request reply message (%lu) is too small (%lu)",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_KEYREQ_REP)
-			err(EXIT_FAILURE, "Key bundle request reply message has invalid proto or msgtype (%d, %d).",
+			err(EXIT_FAILURE, "Key bundle request reply message has invalid proto or msgtype (%d, %d)",
 				msg->msg.proto, msg->msg.type);
 
 		crypto_from_eddsa_public(ikb, p2pstate->key.data);
@@ -165,7 +165,7 @@ alice(int argc, char **argv)
 	/* Peer-to-peer HELLO */
 	if (packet_hshake_aprepare(&p2pstate->state, ident.ik, ident.ik_prv,
 			p2pstate->key.data, ikb, spkb, spkb_sig, opkb))
-		err(EXIT_FAILURE, "Error preparing handshake.");
+		err(EXIT_FAILURE, "Error preparing handshake");
 
 	/* Send and receive messages */
 	if (interactive(&ident, &state, &p2ptable, fd, username))
