@@ -14,22 +14,24 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <unistd.h>
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
+#include <limits.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
+#include <sys/poll.h>
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <sys/types.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <unistd.h>
 
 #include "monocypher.h"
 #define STBDS_NO_SHORT_NAMES

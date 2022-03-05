@@ -15,14 +15,15 @@
  */
 
 #include <limits.h>
-#ifndef __APPLE__
-#include <sys/random.h>
-#endif
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __APPLE__
+#include <sys/random.h>
+#endif
+
 #include "util.h"
 #include "monocypher.h"
 

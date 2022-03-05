@@ -14,6 +14,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <unistd.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stddef.h>
@@ -23,7 +24,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <unistd.h>
 
 #include "err.h"
 #include "util.h"
