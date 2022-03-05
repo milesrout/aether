@@ -38,9 +38,6 @@
 #include "io.h"
 #include "isks.h"
 
-extern int handle_ident_replies(int fd, uint8_t buf[65536],
-	union packet_state *state, int minreplies);
-
 int
 alice(int argc, char **argv)
 {

@@ -54,69 +54,64 @@
 static
 uint8_t zero_key[32] = {0};
 
-int handle_ident_replies(int fd, uint8_t buf[65536], union packet_state *state, int minreplies);
-
+static
 int
-handle_ident_replies(int fd, uint8_t buf[65536], union packet_state *state, int minreplies)
+handle_ident_replies(union packet_state *state, int fd, uint8_t buf[65536])
 {
 	size_t nread;
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size;
 
-	while ((nread = (minreplies ? safe_read(fd, buf, 65536) : safe_read_nonblock(fd, buf, 65536)))) {
-		uint8_t *text = PACKET_TEXT(buf);
-		size_t size = PACKET_TEXT_SIZE(nread);
+	nread = safe_read(fd, buf, 65536);
+	size = PACKET_TEXT_SIZE(nread);
 
-		if (nread == 0)
-			continue;
+	if (nread < PACKET_BUF_SIZE(0))
+		errg(fail, "handle_ident_replies: Received a message that is too small");
 
-		if (nread < PACKET_BUF_SIZE(0))
-			errg(fail, "handle_ident_replies: Received a message that is too small.");
+	if (packet_unlock(state, buf, nread))
+		errg(fail, "handle_ident_replies: Message cannot be decrypted");
 
-		if (packet_unlock(state, buf, nread))
-			errg(fail, "handle_ident_replies: Message cannot be decrypted.");
+	if (size >= 1) {
+		struct msg *msg = (struct msg *)text;
 
-		if (size >= 1) {
-			struct msg *msg = (struct msg *)text;
+		if (msg->proto != PROTO_IDENT)
+			errg(fail, "handle_ident_replies: Message is not an identity-related message");
 
-			minreplies--;
-			if (msg->proto != PROTO_IDENT)
-				continue;
-
-			switch (msg->type) {
-			case IDENT_OPKSSUB_ACK: {
-				struct ident_opkssub_ack_msg *msg = (void *)text;
-				if (size < sizeof *msg)
-					errg(fail, "OPKs submission ack message is the wrong size.");
-				fprintf(stderr, "OPKs submission ack\n");
-				if (msg->result)
-					goto fail;
-				break;
-			}
-			case IDENT_SPKSUB_ACK: {
-				struct ident_spksub_ack_msg *msg = (void *)text;
-				if (size < sizeof *msg)
-					errg(fail, "SPK submission ack message is the wrong size.");
-				fprintf(stderr, "SPK submission ack\n");
-				if (msg->result)
-					goto fail;
-				break;
-			}
-			case IDENT_REGISTER_ACK: {
-				struct ident_register_ack_msg *msg = (void *)text;
-				if (size < sizeof *msg)
-					errg(fail, "Registration ack message is the wrong size.");
-				fprintf(stderr, "Registration submission ack\n");
-				if (msg->result)
-					goto fail;
-				break;
-			}
-			default:
-				fprintf(stderr, "handle_ident_replies: Unrecognised message type %d\n", text[0]);
-				fprintf(stderr, "(proto,type,len) = (%d,%d,%d)\n",
-					msg->proto, msg->type, load16_le(msg->len));
-				displaykey("buf (decrypted)", buf, nread);
-				displaykey("text", text, size);
+		switch (msg->type) {
+		case IDENT_OPKSSUB_ACK: {
+			struct ident_opkssub_ack_msg *msg = (void *)text;
+			if (size < sizeof *msg)
+				errg(fail, "OPKs submission ack message is the wrong size");
+			fprintf(stderr, "OPKs submission ack\n");
+			if (msg->result)
 				goto fail;
-			}
+			break;
+		}
+		case IDENT_SPKSUB_ACK: {
+			struct ident_spksub_ack_msg *msg = (void *)text;
+			if (size < sizeof *msg)
+				errg(fail, "SPK submission ack message is the wrong size");
+			fprintf(stderr, "SPK submission ack\n");
+			if (msg->result)
+				goto fail;
+			break;
+		}
+		case IDENT_REGISTER_ACK: {
+			struct ident_register_ack_msg *msg = (void *)text;
+			if (size < sizeof *msg)
+				errg(fail, "Registration ack message is the wrong size");
+			fprintf(stderr, "Registration submission ack\n");
+			if (msg->result)
+				goto fail;
+			break;
+		}
+		default:
+			fprintf(stderr, "handle_ident_replies: Unrecognised message type %d\n", text[0]);
+			fprintf(stderr, "(proto,type,len) = (%d,%d,%d)\n",
+				msg->proto, msg->type, load16_le(msg->len));
+			displaykey("buf (decrypted)", buf, nread);
+			displaykey("text", text, size);
+			goto fail;
 		}
 	}
 
@@ -150,26 +145,26 @@ get_username(const char **username_storage, union packet_state *state, int fd, u
 	fibre_awaitfd(fd, EPOLLIN);
 	nread = safe_read(fd, buf, 65536);
 	if (nread < PACKET_BUF_SIZE(0))
-		errg(fail, "Received a message that is too small.");
+		errg(fail, "Received a message that is too small");
 
 	if (packet_unlock(state, buf, nread))
-		errg(fail, "Message cannot be decrypted.");
+		errg(fail, "Message cannot be decrypted");
 
 	{
 		struct ident_reverse_lookup_reply_msg *msg = (struct ident_reverse_lookup_reply_msg *)PACKET_TEXT(buf);
 		if (PACKET_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_BASE_SIZE)
-			errg(fail, "Identity reverse lookup reply message (%lu) is too small (%lu).",
+			errg(fail, "Identity reverse lookup reply message (%lu) is too small (%lu)",
 				PACKET_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_BASE_SIZE);
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_REVERSE_LOOKUP_REP)
-			errg(fail, "Identity lookup reply message has invalid proto or msgtype (%d, %d).",
+			errg(fail, "Identity lookup reply message has invalid proto or msgtype (%d, %d)",
 				msg->msg.proto, msg->msg.type);
 		if (PACKET_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len))
-			errg(fail, "Identity reverse lookup reply message (%lu) is too small (%lu).",
+			errg(fail, "Identity reverse lookup reply message (%lu) is too small (%lu)",
 				PACKET_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len));
 
 		username = malloc(msg->username_len + 1);
 		if (!username)
-			errg(fail, "Could not allocate memory.");
+			errg(fail, "Could not allocate memory");
 
 		memcpy(username, msg->username, msg->username_len);
 		username[msg->username_len] = 0;
@@ -270,7 +265,7 @@ try_unlock_hshake_message(struct ident_state *ident, union packet_state *p2pstat
 			hmsg->mac,
 			&hmsg->msgtype,
 			sizeof(struct hshake_ohello_msg) - offsetof(struct hshake_ohello_msg, msgtype)))
-		errg(fail, "Initial message header cannot be decrypted.");
+		errg(fail, "Initial message header cannot be decrypted");
 
 	crypto_wipe(hk, 32);
 
@@ -279,13 +274,13 @@ try_unlock_hshake_message(struct ident_state *ident, union packet_state *p2pstat
 	memcpy(key.data, hmsg->spkb, 32);
 	spk = stbds_hmgetp_null(ident->spks, key);
 	if (spk == NULL)
-		errg(fail, "Message was sent with an unrecognised signed prekey.");
+		errg(fail, "Message was sent with an unrecognised signed prekey");
 
 	if (crypto_verify32(hmsg->opkb, zero_key)) {
 		memcpy(key.data, hmsg->opkb, 32);
 		popk = stbds_hmgetp_null(ident->opks, key);
 		if (popk == NULL)
-			errg(fail, "Message was sent with an unrecognised one-time prekey.");
+			errg(fail, "Message was sent with an unrecognised one-time prekey");
 		memcpy(opk,     popk->key.data, 32);
 		memcpy(opk_prv, popk->prv,      32);
 	}
@@ -302,7 +297,7 @@ try_unlock_hshake_message(struct ident_state *ident, union packet_state *p2pstat
 
 	innermsgsize = padme_enc(innermsgsize + PACKET_P2PHELLO_SIZE(0)) - PACKET_P2PHELLO_SIZE(0);
 	if (packet_hshake_bfinish(p2pstate, hmsg->message, innermsgsize))
-		errg(fail, "Failed to decrypt of inner length %lu.", innermsgsize);
+		errg(fail, "Failed to decrypt of inner length %lu", innermsgsize);
 
 	assert(stbds_hmdel(ident->opks, key));
 	crypto_wipe(&key, sizeof key);
@@ -334,18 +329,18 @@ handle_message(struct ident_state *ident, union packet_state *state,
 	int i, result = -1;
 
 	if (len < MSG_FETCH_REP_BASE_SIZE)
-		errg(fail, "Message fetch reply message (%lu) is too small (%lu).",
+		errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
 			load16_le(msg->msg.len), MSG_FETCH_REP_BASE_SIZE);
 
 	if (msg->message_count > 1)
-		errg(fail, "Message fetch replies with more than one message not yet supported (%d).",
+		errg(fail, "Message fetch replies with more than one message not yet supported (%d)",
 			msg->message_count);
 
 	if (msg->message_count == 0)
 		return 0;
 
 	if (len < MSG_FETCH_REP_SIZE(34))
-		errg(fail, "Message fetch reply message (%lu) is too small (%lu).",
+		errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
 			load16_le(msg->msg.len), MSG_FETCH_REP_SIZE(34));
 
 	for (i = 0; i < msg->message_count; i++) {
@@ -356,11 +351,11 @@ handle_message(struct ident_state *ident, union packet_state *state,
 		size_t text_size;
 
 		if (len < total_size + MSG_FETCH_CONTENT_BASE_SIZE)
-			errg(fail, "Message fetch reply message (%lu) is too small (%lu).",
+			errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
 				len, total_size + MSG_FETCH_CONTENT_BASE_SIZE);
 
 		if (len < total_size + MSG_FETCH_CONTENT_SIZE(load16_le(content->len)))
-			errg(fail, "Message fetch reply message (%lu) is too small (%lu).",
+			errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
 				len, total_size + MSG_FETCH_CONTENT_SIZE(load16_le(content->len)));
 
 		memcpy(key.data, content->isk, 32);
@@ -410,7 +405,7 @@ handle_packet(struct ident_state *ident, union packet_state *state,
 		struct msg *msg = (struct msg *)PACKET_TEXT(buf);
 
 		if (nread < PACKET_BUF_SIZE(sizeof(struct msg)))
-			errg(loop_continue, "handle_packet: Received a packet that is too small to be valid.");
+			errg(loop_continue, "handle_packet: Received a packet that is too small to be valid");
 
 		if (packet_unlock(state, buf, nread))
 			errg(loop_continue, "handle_packet: Message cannot be decrypted.\n");
@@ -567,7 +562,7 @@ register_identity(struct ident_state *ident, union packet_state *state,
 		if (!pcount)
 			continue;
 
-		if (handle_ident_replies(fd, buf, state, 1))
+		if (handle_ident_replies(state, fd, buf))
 			return -1;
 
 		regn_state++;
@@ -608,9 +603,9 @@ bob(int argc, char **argv)
 
 	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
 	if (nread != PACKET_REPLY_SIZE)
-		errx(EXIT_FAILURE, "Received invalid REPLY from server.");
+		errx(EXIT_FAILURE, "Received invalid REPLY from server");
 	if (packet_hshake_cfinish(&state, buf))
-		errx(EXIT_FAILURE, "REPLY message cannot be decrypted.");
+		errx(EXIT_FAILURE, "REPLY message cannot be decrypted");
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	if (register_identity(&ident, &state, fd, buf, "bob"))
