@@ -188,7 +188,7 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 	if (msg->username[msg->username_len] != '\0')
 		errg(fail, "Cannot register a username that is not a valid string.");
 
-	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	packet_get_iskc(isk.data, &peer->state);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) != NULL) {
 		if (strcmp(kv->value.username, (const char *)msg->username) == 0) {
 			failure = 0;
@@ -234,7 +234,7 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 		errg(fail, "Signed prekey submission message (%lu) is the wrong size (%lu).",
 			size, IDENT_SPKSUB_MSG_SIZE);
 
-	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	packet_get_iskc(isk.data, &peer->state);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
 		errg(fail, "Can only submit a signed prekey for a registered identity.");
 
@@ -277,7 +277,7 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 		errg(fail, "One-time prekey submission message (%lu) is the wrong size (%lu).",
 			size, IDENT_OPKSSUB_MSG_SIZE(opkcount));
 
-	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	packet_get_iskc(isk.data, &peer->state);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
 		errg(fail, "Can only submit one-time prekeys for a registered identity.");
 
@@ -418,7 +418,7 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, si
 		errg(fail, "Message-fetching message (%lu) is too small (%lu).",
 			size, MSG_FETCH_MSG_SIZE);
 
-	memcpy(isk.data, peer->state.u.rad.iskc, 32);
+	packet_get_iskc(isk.data, &peer->state);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
 		errg(fail, "Only registered identities may fetch messages.");
 
@@ -499,7 +499,7 @@ handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 			errg(fail, "Cannot allocate memory.");
 		}
 
-		memcpy(smsg.isk, peer->state.u.rad.iskc, 32);
+		packet_get_iskc(smsg.isk, &peer->state);
 		memcpy(smsg.data, msg->messages + 2, message_size);
 		smsg.size = message_size;
 
@@ -517,7 +517,7 @@ handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 		repmsg->msg.type = MSG_IMMEDIATE;
 
 		store16_le(innermsg->len, message_size);
-		memcpy(innermsg->isk,  peer->state.u.rad.iskc, 32);
+		packet_get_iskc(innermsg->isk, &peer->state);
 
 		send_packet(fd, kv->value.peer, buf, repsize);
 		printf("sent %lu-byte (%lu-byte) immediate forwarding message\n",

@@ -44,12 +44,9 @@ int
 alice(int argc, char **argv)
 {
 	int fd;
-	/* uint8_t iska[32], iska_prv[32]; */
-	/* uint8_t ika[32], ika_prv[32]; */
 	uint8_t ikb[32], spkb[32], opkb[32];
 	uint8_t spkb_sig[64];
 	struct packet_state state;
-	/* struct p2pstate p2pstate = {0}; */
 	struct p2pstate *p2ptable = NULL;
 	struct p2pstate *p2pstate;
 	struct p2pstate bobstate = {0};

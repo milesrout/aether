@@ -32,7 +32,6 @@ SRCS      := $(shell find src -name *.c -or -name *.S)
 OBJS      := $(SRCS:%=build/$(BUILD)/%.o)
 DEPS      := $(OBJS:%.o=%.d)
 
-#INCS      := $(addprefix -I,$(shell find ./include -type d))
 INCS      := -iquote./include
 
 WARNINGS  += -pedantic -pedantic-errors -Wno-overlength-strings

@@ -98,6 +98,12 @@ padme_enc(size_t l)
 	return PACKET_TEXT_SIZE(padme(PACKET_BUF_SIZE(l)));
 }
 
+void
+packet_get_iskc(uint8_t iskc[32], const struct packet_state *state)
+{
+	memcpy(iskc, state->u.rad.iskc, 32);
+}
+
 static void offline_shared_secrets(uint8_t sk[32], uint8_t nhk[32], uint8_t hk[32], uint8_t *dh, size_t dh_size);
 
 static
@@ -157,9 +163,7 @@ int
 try_decrypt_header(const struct packet_ratchet_state_common *ra,
 		uint8_t hk[32], struct packethdr *hdr)
 {
-	int result;
-
-	result = crypto_unlock_aead(
+	return crypto_unlock_aead(
 		hdr->msn,
 		hk,
 		hdr->nonce,
@@ -168,13 +172,6 @@ try_decrypt_header(const struct packet_ratchet_state_common *ra,
 		AD_SIZE,
 		hdr->msn,
 		sizeof(struct packethdr) - offsetof(struct packethdr, msn));
-
-	/* if (!result) { */
-	/* 	crypto_wipe(hdr->hdrmac, 16); */
-	/* 	crypto_wipe(hdr->nonce,  24); */
-	/* } */
-
-	return result;
 }
 
 /* decrypt a partially decrypted message
@@ -207,27 +204,11 @@ decrypt_message(uint8_t mk[32], struct packet *packet, size_t packet_size,
 		packet->text,
 		packet_size);
 
-	if (!result) {
+	if (!result)
 		crypto_wipe(mk, 32);
-	}
 
 	return result;
 }
-
-#if 0
-static
-size_t
-bucket_length(struct packetkey_bucket *bucket)
-{
-	size_t n = 0;
-	struct packetkey *packetkey = bucket->first;
-	while (packetkey) {
-		n++;
-		packetkey = packetkey->next;
-	}
-	return n;
-}
-#endif
 
 static
 int
@@ -977,139 +958,3 @@ send_message(struct packet_state *state, struct packet_state *p2pstate,
 	return (p2pstate->u.ra.rac.prerecv ? send_ohello_message : send_omsg_message)
 		(state, p2pstate, recipient_isk, buf, text, text_size);
 }
-
-#if 0
-int
-packet_example1(int fd)
-{
-	/* uint8_t iska[32], iska_prv[32]; */
-	uint8_t ika[32], ika_prv[64];
-	/* obtained from server */
-	uint8_t iskb[32];
-	/* uint8_t ikb[32], ikb_sig[64]; */
-	uint8_t spkb[32], spkb_sig[64];
-	uint8_t opkb[32];
-	uint8_t buf[65536];
-	struct packet_state state;
-
-	/* Prepare the message state for the first handshake message */
-	if (packet_hshake_aprepare(&state,
-			ika, ika_prv,
-			iskb, ikb, /*ikb_sig,*/ spkb, spkb_sig, opkb))
-		return -1;
-
-	/* Create the P2PHELLO (OFFLINE-HELLO) message and update state */
-	packet_hshake_ahello(&state, buf, 0);
-
-	/* Write the P2PHELLO message out to a socket */
-	(void)!write(fd, buf, PACKET_P2PHELLO_SIZE(0));
-
-	/* Wipe the P2PHELLO message now it has been sent */
-	crypto_wipe(buf, PACKET_P2PHELLO_SIZE(0));
-
-	return 0;
-}
-
-int
-packet_example2(int fd __attribute__((unused)))
-{
-	return -1;
-}
-
-int
-packet_example3(int fd)
-{
-	/* These need to be obtained somehow */
-	uint8_t server_sig_public_key[32];
-	uint8_t server_kex_public_key[32];
-	/* In reality these are long-term keys, not generated every time. */
-	uint8_t sign_public_key[32], sign_private_key[32];
-	uint8_t kex_public_key[32], kex_private_key[32];
-	struct packet_state state;
-
-	memcpy(server_sig_public_key, isks, 32);
-	(void)isks_prv;
-	memcpy(server_kex_public_key, iks, 32);
-	(void)iks_prv;
-
-	generate_sig_keypair(sign_public_key, sign_private_key);
-	generate_kex_keypair(kex_public_key, kex_private_key);
-
-	{
-		uint8_t buf[PACKET_HSHAKE_SIZE];
-
-		/* Prepare the message state for the first handshake message */
-		packet_hshake_cprepare(&state,
-			server_sig_public_key, server_kex_public_key,
-			sign_public_key, sign_private_key,
-			kex_public_key, kex_private_key);
-
-		/* Create the HELLO message and update state */
-		packet_hshake_chello(&state, buf);
-
-		/* Write the hello message out to a socket */
-		(void)!write(fd, buf, PACKET_HELLO_SIZE);
-
-		/* Wipe the hello message now it has been sent */
-		crypto_wipe(buf, PACKET_HELLO_SIZE);
-
-		/* Read a reply back from the peer */
-		(void)!read(fd, buf, PACKET_REPLY_SIZE);
-
-		/* Check the handshake reply's integrity and update state */
-		if (packet_hshake_cfinish(&state, buf)) {
-			crypto_wipe(buf, PACKET_REPLY_SIZE);
-			return -1;
-		}
-		
-		/* Wipe the reply message now it has been checked */
-		crypto_wipe(buf, PACKET_REPLY_SIZE);
-	}
-
-	return 0;
-}
-
-int
-packet_example4(int fd)
-{
-	/* In reality these are long-term keys, not generated every time. */
-	uint8_t sign_public_key[32], sign_private_key[32];
-	uint8_t kex_public_key[32], kex_private_key[32];
-	struct packet_state state;
-
-	generate_sig_keypair(sign_public_key, sign_private_key);
-	generate_kex_keypair(kex_public_key, kex_private_key);
-
-	/* Prepare the message state as an online handshake replier */
-	packet_hshake_dprepare(&state,
-		sign_public_key, sign_private_key,
-		kex_public_key, kex_private_key);
-
-	{
-		uint8_t buf[PACKET_HSHAKE_SIZE];
-
-		/* Read a hello message from a peer */
-		(void)!read(fd, buf, PACKET_HELLO_SIZE);
-
-		/* Check the handshake hello and update state */
-		if (packet_hshake_dcheck(&state, buf)) {
-			crypto_wipe(buf, PACKET_HELLO_SIZE);
-			return -1;
-		}
-
-		/* Wipe the hello message now it has been checked */
-		crypto_wipe(buf, PACKET_HELLO_SIZE);
-
-		/* Create the reply message and update state */
-		packet_hshake_dreply(&state, buf);
-
-		/* Write the reply message out to the socket */
-		(void)!write(fd, buf, PACKET_REPLY_SIZE);
-
-		/* Wipe the reply message now it has been sent */
-		crypto_wipe(buf, PACKET_REPLY_SIZE);
-	}
-
-	return 0;
-}
-#endif

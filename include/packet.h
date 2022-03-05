@@ -141,15 +141,12 @@ struct hshake_omsg_msg {
 	uint8_t message[];
 };
 #define PACKET_OHELLO_TEXT(buf) ((buf) + offsetof(struct hshake_ohello_msg, message))
-extern int packet_example1(int fd);
-extern int packet_example2(int fd);
-extern int packet_example3(int fd);
-extern int packet_example4(int fd);
 #define PACKET_HELLO_SIZE sizeof(struct hshake_hello_msg)
 #define PACKET_REPLY_SIZE sizeof(struct hshake_reply_msg)
 #define PACKET_P2PHELLO_SIZE(n) (sizeof(struct hshake_ohello_msg) + (n))
 /* PACKET_HSHAKE_SIZE = MAX( PACKET_{HELLO,REPLY}_SIZE ) */
 #define PACKET_HSHAKE_SIZE PACKET_HELLO_SIZE
+extern void packet_get_iskc(uint8_t iskc[32], const struct packet_state *state);
 extern int packet_hshake_aprepare(struct packet_state *state,
 	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
 	const uint8_t his_sign_public_key[32], const uint8_t his_public_key[32],
