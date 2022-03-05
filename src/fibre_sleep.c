@@ -27,8 +27,8 @@ fibre_sleep_ms(long milliseconds)
 {
 	struct timespec ts;
 
-	ts.tv_sec = 0;
-	ts.tv_nsec = milliseconds * 1000000;
+	ts.tv_sec = milliseconds / 1000L;
+	ts.tv_nsec = (milliseconds % 1000L) * 1000000L;
 
 	return fibre_sleep(&ts);
 }
@@ -38,8 +38,8 @@ fibre_sleep_us(long microseconds)
 {
 	struct timespec ts;
 
-	ts.tv_sec = 0;
-	ts.tv_nsec = microseconds * 1000;
+	ts.tv_sec = microseconds / 1000000L;
+	ts.tv_nsec = (microseconds % 1000000L) * 1000L;
 
 	return fibre_sleep(&ts);
 }
@@ -49,8 +49,8 @@ fibre_sleep_ns(long nanoseconds)
 {
 	struct timespec ts;
 
-	ts.tv_sec = 0;
-	ts.tv_nsec = nanoseconds;
+	ts.tv_sec = nanoseconds / 1000000000L;
+	ts.tv_nsec = nanoseconds % 1000000000L;
 
 	return fibre_sleep(&ts);
 }
