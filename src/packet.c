@@ -529,7 +529,8 @@ packet_unlock(union packet_state *state, uint8_t *buf, size_t buf_size)
 void
 packet_hshake_dprepare(union packet_state *state,
 		const uint8_t iskd[32], const uint8_t iskd_prv[32],
-		const uint8_t ikd[32], const uint8_t ikd_prv[32])
+		const uint8_t ikd[32], const uint8_t ikd_prv[32],
+		const uint8_t cvd[32])
 {
 	struct packet_hshake_dstate *hsd = &state->hsd;
 
@@ -540,14 +541,18 @@ packet_hshake_dprepare(union packet_state *state,
 	memcpy(hsd->ikd,     ikd,      32);
 	memcpy(hsd->ikd_prv, ikd_prv,  32);
 	generate_kex_keypair(hsd->ekd, hsd->ekd_prv);
-	randbytes(hsd->cvd, 32);
+	if (cvd == NULL)
+		randbytes(hsd->cvd, 32);
+	else
+		memcpy(hsd->cvd, cvd, 32);
 }
 
 void
 packet_hshake_cprepare(union packet_state *state,
 		const uint8_t iskd[32], const uint8_t ikd[32],
 		const uint8_t iskc[32], const uint8_t iskc_prv[32],
-		const uint8_t ikc[32], const uint8_t ikc_prv[32])
+		const uint8_t ikc[32], const uint8_t ikc_prv[32],
+		const uint8_t cvc[32])
 {
 	struct packet_hshake_cstate *hsc = &state->hsc;
 
@@ -561,7 +566,10 @@ packet_hshake_cprepare(union packet_state *state,
 	memcpy(hsc->ikc_prv, ikc_prv,  32);
 	generate_kex_keypair(hsc->ekc, hsc->ekc_prv);
 	generate_hidden_keypair(hsc->hkc, hsc->hkc_prv);
-	randbytes(hsc->cvc, 32);
+	if (cvc == NULL)
+		randbytes(hsc->cvc, 32);
+	else
+		memcpy(hsc->cvc, cvc, 32);
 }
 
 static

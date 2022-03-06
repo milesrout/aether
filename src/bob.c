@@ -610,7 +610,10 @@ bob(int argc, char **argv)
 	if (fd == -1)
 		err(EXIT_FAILURE, "Could not set client up");
 
-	packet_hshake_cprepare(&state, isks, iks, ident.isk, ident.isk_prv, ident.ik, ident.ik_prv);
+	packet_hshake_cprepare(&state, isks, iks,
+		ident.isk, ident.isk_prv,
+		ident.ik, ident.ik_prv,
+		NULL);
 	packet_hshake_chello(&state, buf);
 	safe_write(fd, buf, PACKET_HELLO_SIZE);
 	crypto_wipe(buf, PACKET_HELLO_SIZE);

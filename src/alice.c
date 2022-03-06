@@ -288,7 +288,8 @@ alice(int argc, char **argv)
 	/* send HELLO message */
 	packet_hshake_cprepare(&state, isks, iks,
 		ident.isk, ident.isk_prv,
-		ident.ik, ident.ik_prv);
+		ident.ik, ident.ik_prv,
+		NULL);
 	packet_hshake_chello(&state, buf);
 	safe_write(fd, buf, PACKET_HELLO_SIZE);
 	crypto_wipe(buf, PACKET_HELLO_SIZE);

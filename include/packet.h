@@ -160,12 +160,14 @@ extern int packet_hshake_bfinish(union packet_state *state, uint8_t *buf, size_t
 extern void packet_hshake_cprepare(union packet_state *state,
 	const uint8_t his_sign_public_key[32], const uint8_t his_kex_public_key[32],
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
-	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
+	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
+	const uint8_t client_challenge_value[32]);
 extern void packet_hshake_chello(union packet_state *state, uint8_t buf[PACKET_HELLO_SIZE]);
 extern int packet_hshake_cfinish(union packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]);
 extern void packet_hshake_dprepare(union packet_state *state,
 	const uint8_t sign_public_key[32], const uint8_t sign_private_key[32],
-	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32]);
+	const uint8_t kex_public_key[32], const uint8_t kex_private_key[32],
+	const uint8_t server_challenge_value[32]);
 extern int packet_hshake_dcheck(union packet_state *state, uint8_t buf[PACKET_HELLO_SIZE]);
 extern void packet_hshake_dreply(union packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]);
 extern void packet_lock(union packet_state *state, uint8_t *buf, size_t text_size);

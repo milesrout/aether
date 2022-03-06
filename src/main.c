@@ -626,7 +626,9 @@ handle_datagram(int fd, struct server_ctx *ctx)
 		crypto_wipe(&peer->state, sizeof peer->state);
 
 		packet_hshake_dprepare(&peer->state,
-			isks, isks_prv, iks, iks_prv);
+			isks, isks_prv,
+			iks, iks_prv,
+			NULL);
 
 		if (!packet_hshake_dcheck(&peer->state, buf)) {
 			crypto_wipe(buf, PACKET_HELLO_SIZE);
