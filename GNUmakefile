@@ -111,27 +111,27 @@ syntastic:
 
 release:
 	-$(MAKE) "BUILD=release"
-	./build/release/$(TARGET)
+	./build/release/$(TARGET) $(args)
 
 musl:
 	-$(MAKE) "BUILD=musl"
-	./build/musl/$(TARGET)
+	./build/musl/$(TARGET) $(args)
 
 valgrind:
 	-$(MAKE) "BUILD=valgrind"
-	valgrind $(VALGRIND_FLAGS) ./build/valgrind/$(TARGET)
+	valgrind $(VALGRIND_FLAGS) ./build/valgrind/$(TARGET) $(args)
 
 sanitise:
 	-$(MAKE) "BUILD=sanitise"
-	./build/sanitise/$(TARGET)
+	./build/sanitise/$(TARGET) $(args)
 
 gdb:
 	-$(MAKE) "BUILD=gdb"
-	gdb ./build/gdb/$(TARGET)
+	gdb ./build/gdb/$(TARGET) $(args)
 
 debug:
 	-$(MAKE)
-	./build/debug/$(TARGET)
+	./build/debug/$(TARGET) $(args)
 
 ifneq ($(MAKECMDGOALS),clean)
 ifneq ($(MAKECMDGOALS),cleanall)
