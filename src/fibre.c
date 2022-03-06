@@ -225,10 +225,10 @@ try_fibre_store_list_dequeue(struct fibre_store_list *list)
 }
 
 /*
- * This value is calculated so that each fibre_store_block should be page-sized.
+ * This value is calculated so that each fibre_store_block should be 4xpage-sized.
  * e.g. if sizeof(fibre_store_node) is 160 bytes, this value should be 25.
  */
-#define FIBRE_STORE_NODES_PER_BLOCK 34
+#define FIBRE_STORE_NODES_PER_BLOCK 136
 
 /*
  * struct fibres are allocated in page-sized blocks, which at the moment are
@@ -464,14 +464,14 @@ fibre_init(size_t stack_size)
 
 #define BLOCK_SIZE (sizeof(struct fibre_store_block))
 #define NODE_SIZE (sizeof(struct fibre_store_node))
-	if (BLOCK_SIZE > page_size)
-		warnx("fibre_store_block is too big to fit in a page: lower FIBRE_STORE_NODES_PER_BLOCK (%lu)",
+	if (BLOCK_SIZE > 4 * page_size)
+		warnx("fibre_store_block is too big to fit in four pages: lower FIBRE_STORE_NODES_PER_BLOCK (%lu)",
 			BLOCK_SIZE);
-	else if (BLOCK_SIZE + NODE_SIZE <= page_size)
+	else if (BLOCK_SIZE + NODE_SIZE <= 4 * page_size)
 		warnx("fibre_store_block could be bigger: raise FIBRE_STORE_NODES_PER_BLOCK (%lu)",
 			BLOCK_SIZE);
 	else
-		warnx("fibre_store_block fits perfectly in a page (%lu)",
+		warnx("fibre_store_block fits perfectly in four pages (%lu)",
 			BLOCK_SIZE);
 #undef BLOCK_SIZE
 #undef NODE_SIZE
