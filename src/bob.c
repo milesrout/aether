@@ -509,7 +509,7 @@ handler_thread(int fd, void *arg)
 	}
 }
 
-int
+void
 interactive(struct ident_state *ident, union packet_state *state,
 		struct p2pstate **p2ptable, int fd, const char *username)
 {
@@ -611,8 +611,7 @@ bob(int argc, char **argv)
 	if (register_identity(&ident, &state, fd, buf, "bob"))
 		errx(EXIT_FAILURE, "Cannot register username bob");
 
-	if (interactive(&ident, &state, &p2ptable, fd, "bob"))
-		errx(EXIT_FAILURE, "interactive");
+	interactive(&ident, &state, &p2ptable, fd, "bob");
 
 	exit(EXIT_SUCCESS);
 }

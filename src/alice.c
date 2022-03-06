@@ -165,8 +165,7 @@ alice(int argc, char **argv)
 		err(EXIT_FAILURE, "Error preparing handshake");
 
 	/* Send and receive messages */
-	if (interactive(&ident, &state, &p2ptable, fd, username))
-		err(EXIT_FAILURE, "interactive");
+	interactive(&ident, &state, &p2ptable, fd, username);
 
 	exit(EXIT_SUCCESS);
 }
