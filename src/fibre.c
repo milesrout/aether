@@ -751,15 +751,7 @@ fibre_yield_impl(int fd, int events)
 	/* fprintf(stderr, "Yielding from fibre %d to fibre %d.\n", */
 	/* 	   old_fibre->f_id, */
 	/* 	   current_fibre->f_id); */
-#ifdef BUILD_VALGRIND
-	current_fibre->f_valgrind_id = VALGRIND_STACK_REGISTER(
-		current_fibre->f_stack,
-		current_fibre->f_stack + global_fibre_store.fs_stack_size);
-#endif
 	fibre_switch(old, new);
-#ifdef BUILD_VALGRIND
-	VALGRIND_STACK_DEREGISTER(old_fibre->f_valgrind_id);
-#endif
 	return 1;
 }
 
