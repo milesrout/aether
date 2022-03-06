@@ -407,12 +407,8 @@ handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 {
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t size = PACKET_TEXT_SIZE(nread);
-	int msgcount = 0;
-	ptrdiff_t arrlen;
 	struct key isk;
 	struct userkv *kv;
-	struct stored_message smsg;
-	size_t totalmsglength;
 
 	if (size < MSG_GOODBYE_MSG_SIZE)
 		errg(noreply, "Goodbye message (%lu) is too small (%lu).",
@@ -426,7 +422,6 @@ handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	kv->value.peer = NULL;
 
 end:
-	totalmsglength = msgcount == 0 ? 0 : smsg.size + 34;
 	size = msg_goodbye_ack_init(text);
 	send_packet(fd, peer, buf, size);
 	printf("sent %lu-byte (%lu-byte) message goodbye ack message\n",
