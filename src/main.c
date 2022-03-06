@@ -50,6 +50,7 @@
 #include "main.h"
 #include "fibre.h"
 #include "timer.h"
+#include "persist.h"
 
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
@@ -935,6 +936,44 @@ fibre(int argc, char **argv)
 	exit(EXIT_SUCCESS);
 }
 
+static
+uint8_t zero_key[32] = {0};
+
+static
+void
+persist(int argc, char **argv)
+{
+	uint8_t *buf;
+	size_t size;
+	const char *command;
+	const char *filename;
+
+	if (argc != 4)
+		usage();
+
+	command = argv[2];
+	filename = argv[3];
+
+	if (command[0] == 'r') {
+		if (persist_read(&buf, &size, filename, zero_key))
+			err(EXIT_FAILURE, "Could not load from `%s'", filename);
+		displaykey("data", buf, size);
+		fprintf(stderr, "%.*s\n", size, buf);
+	} else if (command[0] == 'w') {
+		buf = calloc(1, 16);
+		if (buf == NULL)
+			err(EXIT_FAILURE, "calloc");
+		memcpy(buf, "hello, world!", strlen("hello, world!") + 1);
+		size = 16;
+		if (persist_write(filename, buf, size, zero_key))
+			err(EXIT_FAILURE, "Could not store to `%s'", filename);
+	} else {
+		usage();
+	}
+
+	exit(EXIT_SUCCESS);
+}
+
 void
 usage(void)
 {
@@ -964,6 +1003,7 @@ main(int argc, char **argv)
 		case 'f': fibre(argc, argv); break;
 		case 'k': keygen(argc, argv); break;
 		case 'p': proof(argc, argv); break;
+		case 'P': persist(argc, argv); break;
 		default:  usage();
 	}
 
