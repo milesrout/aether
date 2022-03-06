@@ -937,9 +937,6 @@ fibre(int argc, char **argv)
 }
 
 static
-uint8_t zero_key[32] = {0};
-
-static
 void
 persist(int argc, char **argv)
 {
@@ -947,6 +944,9 @@ persist(int argc, char **argv)
 	size_t size;
 	const char *command;
 	const char *filename;
+	ssize_t password_size;
+	char *password = NULL;
+	size_t password_bufsize = 0;
 
 	if (argc != 4)
 		usage();
@@ -954,19 +954,23 @@ persist(int argc, char **argv)
 	command = argv[2];
 	filename = argv[3];
 
+	printf("password: ");
+	if ((password_size = getline(&password, &password_bufsize, stdin)) == -1)
+		err(EXIT_FAILURE, "Could not read password from stdin");
+
 	if (command[0] == 'r') {
-		if (persist_read(&buf, &size, filename, zero_key))
-			err(EXIT_FAILURE, "Could not load from `%s'", filename);
+		if (persist_read(&buf, &size, filename, password, password_size))
+			errx(EXIT_FAILURE, "Could not load from `%s'", filename);
 		displaykey("data", buf, size);
-		fprintf(stderr, "%.*s\n", size, buf);
+		fprintf(stderr, "%.*s\n", (int)size, buf);
 	} else if (command[0] == 'w') {
 		buf = calloc(1, 16);
 		if (buf == NULL)
 			err(EXIT_FAILURE, "calloc");
 		memcpy(buf, "hello, world!", strlen("hello, world!") + 1);
 		size = 16;
-		if (persist_write(filename, buf, size, zero_key))
-			err(EXIT_FAILURE, "Could not store to `%s'", filename);
+		if (persist_write(filename, buf, size, password, password_size))
+			errx(EXIT_FAILURE, "Could not store to `%s'", filename);
 	} else {
 		usage();
 	}

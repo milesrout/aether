@@ -12,13 +12,30 @@
 #include "persist.h"
 #include "util.h"
 
-int persist_read(uint8_t **pbuf, size_t *psize, const char *filename,
-		const uint8_t key[32])
+#define ARGON2I_ITERATIONS 3
+#define ARGON2I_BLOCKS 100000
+#define ARGON2I_BLOCK_SIZE 1024
+
+#define NONCE_SIZE 24
+#define MAC_SIZE 16
+#define SALT_SIZE 16
+#define PERSIST_OVERHEAD (NONCE_SIZE + MAC_SIZE + SALT_SIZE)
+#define TEXT_OFFSET (NONCE_SIZE + SALT_SIZE)
+
+static
+void
+hash_password(uint8_t key[32], const uint8_t salt[16],
+	const char *password, size_t password_size);
+
+int
+persist_read(uint8_t **pbuf, size_t *psize, const char *filename,
+		const char *password, size_t password_size)
 {
 	int fd = -1, result = -1;
 	off_t off = 0;
 	size_t size = 0;
 	void *file = MAP_FAILED, *buf = MAP_FAILED;
+	uint8_t key[32];
 
 	fd = open(filename, O_RDONLY);
 	if (fd == -1)
@@ -28,14 +45,16 @@ int persist_read(uint8_t **pbuf, size_t *psize, const char *filename,
 	if (off == -1)
 		errg(cleanup, "Could not seek `%s'", filename);
 
-	if (off <= 40)
+	if (off <= PERSIST_OVERHEAD)
 		errg(cleanup, "File too small `%s'", filename);
 
-	size = off - 40;
+	size = off - PERSIST_OVERHEAD;
 
 	file = mmap(NULL, off, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (file == MAP_FAILED)
 		errg(cleanup, "Could not map `%s'", filename);
+
+	hash_password(key, (uint8_t *)file, password, password_size);
 
 	buf = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
 	if (buf == MAP_FAILED)
@@ -45,12 +64,12 @@ int persist_read(uint8_t **pbuf, size_t *psize, const char *filename,
 		errg(cleanup, "Could not lock %ld bytes of memory", off);
 
 	if (crypto_unlock(
-			(uint8_t *)buf,             /* plain */
-			key,                        /* key */
-			(uint8_t *)file,            /* nonce */
-			(uint8_t *)file + off - 16, /* mac */
-			(uint8_t *)file + 24,       /* cipher */
-			size))                      /* size */
+			(uint8_t *)buf,                   /* plain */
+			key,                              /* key */
+			(uint8_t *)file + SALT_SIZE,      /* nonce */
+			(uint8_t *)file + off - MAC_SIZE, /* mac */
+			(uint8_t *)file + TEXT_OFFSET,    /* cipher */
+			size))                            /* size */
 		errg(cleanup, "Could not decrypt `%s'", filename);
 
 	result = 0;
@@ -58,18 +77,21 @@ int persist_read(uint8_t **pbuf, size_t *psize, const char *filename,
 	*psize = size;
 
 cleanup:
+	crypto_wipe(key, 32);
 	if (result && buf != MAP_FAILED) munmap(buf, off);
 	if (file != MAP_FAILED) munmap(file, off);
 	if (fd != -1) close(fd);
 	return result;
 }
 
-int persist_write(const char *filename, const uint8_t *buf, size_t size,
-		const uint8_t key[32])
+int
+persist_write(const char *filename, const uint8_t *buf, size_t size,
+		const char *password, size_t password_size)
 {
 	int fd = -1, result = -1;
 	void *file = MAP_FAILED;
-	size_t total = size + 40;
+	size_t total = size + PERSIST_OVERHEAD;
+	uint8_t key[32];
 
 	fd = open(filename, O_CREAT|O_RDWR, 0600);
 	if (fd == -1)
@@ -83,17 +105,37 @@ int persist_write(const char *filename, const uint8_t *buf, size_t size,
 	if (file == MAP_FAILED)
 		errg(cleanup, "Could not map `%s'", filename);
 
-	randbytes(file, 24);
-	crypto_lock((uint8_t *)file + total - 16, /* mac */
-		(uint8_t *)file + 24,             /* cipher */
-		key,                              /* key */
-		(uint8_t *)file,                  /* nonce */
-		(const uint8_t *)buf,             /* plain */
-		size);                            /* size */
+	randbytes(file, SALT_SIZE + NONCE_SIZE);
+
+	hash_password(key, (uint8_t *)file, password, password_size);
+
+	crypto_lock((uint8_t *)file + total - MAC_SIZE, /* mac */
+		(uint8_t *)file + TEXT_OFFSET,          /* cipher */
+		key,                                    /* key */
+		(uint8_t *)file + SALT_SIZE,            /* nonce */
+		(const uint8_t *)buf,                   /* plain */
+		size);                                  /* size */
 	result = 0;
 
 cleanup:
+	crypto_wipe(key, 32);
 	if (file != MAP_FAILED) munmap(file, total);
 	if (fd != -1) close(fd);
 	return result;
+}
+
+void
+hash_password(uint8_t key[32], const uint8_t salt[16], const char *password, size_t password_size)
+{
+	uint8_t *work_area = calloc(ARGON2I_BLOCK_SIZE, ARGON2I_BLOCKS);
+	if (work_area == NULL)
+		err(EXIT_FAILURE, "Could not allocate memory for Argon2i work area");
+
+	crypto_argon2i(
+		key, 32,
+		work_area, ARGON2I_BLOCKS, ARGON2I_ITERATIONS,
+		(const uint8_t *)password, password_size,
+		salt, SALT_SIZE);
+
+	free(work_area);
 }
