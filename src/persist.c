@@ -141,3 +141,59 @@ hash_password(uint8_t key[32], const uint8_t salt[16], const char *password, siz
 
 	free(work_area);
 }
+
+int
+persist_loadbytes(uint8_t *buf, size_t size, const uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < size)
+		return -1;
+
+	memcpy(buf, *pbuf, size);
+
+	*pbuf += size;
+	*psize -= size;
+
+	return 0;
+}
+
+int
+persist_load32_le(uint32_t *n, const uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 4)
+		return -1;
+
+	*n = load32_le(*pbuf);
+
+	*pbuf += 4;
+	*psize -= 4;
+
+	return 0;
+}
+
+int
+persist_storebytes(const uint8_t *buf, size_t size, uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < size)
+		return -1;
+
+	memcpy(*pbuf, buf, size);
+
+	*pbuf += size;
+	*psize -= size;
+
+	return 0;
+}
+
+int
+persist_store32_le(const uint32_t *n, uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 4)
+		return -1;
+
+	store32_le(*pbuf, *n);
+
+	*pbuf += 4;
+	*psize -= 4;
+
+	return 0;
+}

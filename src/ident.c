@@ -20,9 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "monocypher.h"
 #define STBDS_NO_SHORT_NAMES
 #include "stb_ds.h"
-#include "monocypher.h"
 
 #include "util.h"
 #include "packet.h"

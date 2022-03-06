@@ -180,9 +180,10 @@ fail:
 
 static
 void
-handle_input(union packet_state *state, struct p2pstate **p2pstate,
+handle_input(union packet_state *state, struct p2pstate **p2ptable,
 		int fd, uint8_t *buf, const char *username)
 {
+	struct p2pstate *p2pstate;
 	uint8_t text[258] = {0};
 	uint16_t text_size;
 	size_t size;
@@ -207,8 +208,8 @@ handle_input(union packet_state *state, struct p2pstate **p2pstate,
 		packet_lock(state, buf, size);
 		displaykey("after", buf, PACKET_BUF_SIZE(size));
 	} else {
-		size = send_message(state, &(*p2pstate)->state,
-			(*p2pstate)->key.data, buf, text, text_size);
+		size = send_message(state, &(*p2ptable)->state,
+			(*p2ptable)->key.data, buf, text, text_size);
 	}
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
