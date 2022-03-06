@@ -403,6 +403,41 @@ fail:
 
 static
 void
+handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+{
+	uint8_t *text = PACKET_TEXT(buf);
+	size_t size = PACKET_TEXT_SIZE(nread);
+	int msgcount = 0;
+	ptrdiff_t arrlen;
+	struct key isk;
+	struct userkv *kv;
+	struct stored_message smsg;
+	size_t totalmsglength;
+
+	if (size < MSG_GOODBYE_MSG_SIZE)
+		errg(noreply, "Goodbye message (%lu) is too small (%lu).",
+			size, MSG_GOODBYE_MSG_SIZE);
+
+	packet_get_iskc(isk.data, &peer->state);
+	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
+		goto end;
+
+	peer_del(&ctx->peertable, kv->value.peer);
+	kv->value.peer = NULL;
+
+end:
+	totalmsglength = msgcount == 0 ? 0 : smsg.size + 34;
+	size = msg_goodbye_ack_init(text);
+	send_packet(fd, peer, buf, size);
+	printf("sent %lu-byte (%lu-byte) message goodbye ack message\n",
+		size, PACKET_BUF_SIZE(size));
+
+noreply:
+	return;
+}
+
+static
+void
 handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
@@ -663,6 +698,9 @@ handle_datagram(int fd, struct server_ctx *ctx)
 			break;
 		case PROTO_MSG:
 			switch (msg->type) {
+			case MSG_GOODBYE_MSG:
+				handle_goodbye(ctx, peer, fd, buf, nread);
+				break;
 			case MSG_FETCH_MSG:
 				handle_fetch(ctx, peer, fd, buf, nread);
 				break;
@@ -751,7 +789,6 @@ interval_timer_thread(int secs, void *unused)
 		warnx("Heartbeat %lu", expirations);
 	}
 }
-
 
 static
 void
@@ -957,6 +994,11 @@ persist(int argc, char **argv)
 	printf("password: ");
 	if ((password_size = getline(&password, &password_bufsize, stdin)) == -1)
 		err(EXIT_FAILURE, "Could not read password from stdin");
+
+	assert(password[password_size - 1] == '\n');
+	assert(password[password_size] == '\0');
+	password[password_size - 1] = '\0';
+	password_size--;
 
 	if (command[0] == 'r') {
 		if (persist_read(&buf, &size, filename, password, password_size))

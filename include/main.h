@@ -28,3 +28,4 @@ extern void interactive(struct ident_state *ident,
 extern int register_identity(struct ident_state *ident,
 	union packet_state *state,
 	int fd, uint8_t buf[65536], const char *name);
+extern int prompt_line(char **buf, size_t *len, size_t *size, const char *prompt);

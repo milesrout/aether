@@ -200,7 +200,16 @@ handle_input(union packet_state *state, struct p2pstate **p2pstate,
 
 	text_size = strlen((char*)(text)) + 1;
 
-	size = send_message(state, &(*p2pstate)->state, (*p2pstate)->key.data, buf, text, text_size);
+	if (strcmp((const char *)text, "/quit") == 0) {
+		crypto_wipe(buf, 65536);
+		size = msg_goodbye_init(buf);
+		displaykey("before", buf, PACKET_BUF_SIZE(size));
+		packet_lock(state, buf, size);
+		displaykey("after", buf, PACKET_BUF_SIZE(size));
+	} else {
+		size = send_message(state, &(*p2pstate)->state,
+			(*p2pstate)->key.data, buf, text, text_size);
+	}
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 }
@@ -424,6 +433,8 @@ handle_packet(struct ident_state *ident, union packet_state *state,
 				goto loop_continue;
 			case MSG_FORWARD_ACK:
 				goto loop_continue;
+			case MSG_GOODBYE_ACK:
+				goto loop_quit;
 			default:
 				goto loop_invalid;
 			}
@@ -442,6 +453,8 @@ handle_packet(struct ident_state *ident, union packet_state *state,
 			msg->proto, msg->type);
 	loop_fail:
 		errg(loop_continue, "handle_packet: Unspecified error.\n");
+	loop_quit:
+		exit(EXIT_SUCCESS);
 	loop_continue:
 		crypto_wipe(buf, nread);
 	}

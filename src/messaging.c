@@ -63,3 +63,27 @@ msg_fetch_rep_init(uint8_t *buf, uint8_t msgcount, size_t totalmsglength)
 
 	return padme_enc(MSG_FETCH_REP_SIZE(totalmsglength));
 }
+
+size_t
+msg_goodbye_init(uint8_t *buf)
+{
+	struct msg_goodbye_msg *msg = (struct msg_goodbye_msg *)PACKET_TEXT(buf);
+
+	msg->msg.proto = PROTO_MSG;
+	msg->msg.type = MSG_GOODBYE_MSG;
+	store16_le(msg->msg.len, MSG_GOODBYE_MSG_SIZE);
+
+	return padme_enc(MSG_GOODBYE_MSG_SIZE);
+}
+
+size_t
+msg_goodbye_ack_init(uint8_t *buf)
+{
+	struct msg_goodbye_ack_msg *msg = (struct msg_goodbye_ack_msg *)buf;
+
+	msg->msg.proto = PROTO_MSG;
+	msg->msg.type = MSG_GOODBYE_ACK;
+	store16_le(msg->msg.len, MSG_GOODBYE_ACK_SIZE);
+
+	return padme_enc(MSG_GOODBYE_ACK_SIZE);
+}

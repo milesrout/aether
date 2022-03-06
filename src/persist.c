@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <string.h>
 
 #include "monocypher.h"
 
@@ -124,6 +125,7 @@ cleanup:
 	return result;
 }
 
+static
 void
 hash_password(uint8_t key[32], const uint8_t salt[16], const char *password, size_t password_size)
 {

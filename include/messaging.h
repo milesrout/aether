@@ -20,6 +20,8 @@
 #define MSG_FETCH_MSG ((uint8_t)4)
 #define MSG_FETCH_REP ((uint8_t)5)
 #define MSG_IMMEDIATE ((uint8_t)6)
+#define MSG_GOODBYE_MSG ((uint8_t)8)
+#define MSG_GOODBYE_ACK ((uint8_t)9)
 struct msg_forward_msg {
 	struct msg msg;
 	uint8_t isk[32];
@@ -33,6 +35,14 @@ struct msg_forward_ack_msg {
 	uint8_t result;
 };
 #define MSG_FORWARD_ACK_SIZE (sizeof(struct msg_forward_ack_msg))
+struct msg_goodbye_msg {
+	struct msg msg;
+};
+#define MSG_GOODBYE_MSG_SIZE (sizeof(struct msg_goodbye_msg))
+struct msg_goodbye_ack_msg {
+	struct msg msg;
+};
+#define MSG_GOODBYE_ACK_SIZE (sizeof(struct msg_goodbye_ack_msg))
 struct msg_fetch_msg {
 	struct msg msg;
 };
@@ -54,3 +64,5 @@ struct msg_fetch_content_msg {
 extern size_t msg_forward_ack_init(uint8_t *buf, uint8_t result);
 extern size_t msg_fetch_rep_init(uint8_t *buf, uint8_t message_count, size_t totalmsglength);
 extern size_t msg_fetch_init(uint8_t *buf);
+extern size_t msg_goodbye_ack_init(uint8_t *buf);
+extern size_t msg_goodbye_init(uint8_t *buf);
