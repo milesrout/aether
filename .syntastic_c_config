@@ -41,11 +41,11 @@
 -Wnested-externs
 -Wno-missing-field-initializers
 -Wno-overlength-strings
+-Wno-parentheses
 -Wnormalized=nfkc
 -Wnull-dereference
 -Wold-style-definition
 -Wpacked
--Wparentheses
 -Wredundant-decls
 -Wreturn-local-addr
 -Wshift-overflow=2

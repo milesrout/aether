@@ -46,7 +46,7 @@ WARNINGS  += -Warray-bounds=2 -Wattribute-alias=2 -Wlogical-op
 WARNINGS  += -Wduplicated-branches -Wduplicated-cond -Wtrampolines -Wfloat-equal
 WARNINGS  += -Wunsafe-loop-optimizations -Wbad-function-cast #-Wshadow
 WARNINGS  += -Wcast-qual -Wcast-align -Wwrite-strings #-Wconversion
-WARNINGS  += -Wpacked -Wdangling-else -Wparentheses #-Wsign-conversion
+WARNINGS  += -Wpacked -Wdangling-else -Wno-parentheses #-Wsign-conversion
 WARNINGS  += -Wdate-time -Wjump-misses-init -Wreturn-local-addr
 WARNINGS  += -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes
 WARNINGS  += -Wmissing-declarations -Wnormalized=nfkc -Wredundant-decls
