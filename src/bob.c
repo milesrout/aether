@@ -203,7 +203,7 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 
 	if (strcmp((const char *)text, "/quit") == 0) {
 		crypto_wipe(buf, 65536);
-		size = msg_goodbye_init(buf);
+		size = msg_goodbye_init(buf, NULL);
 		displaykey("before", buf, PACKET_BUF_SIZE(size));
 		packet_lock(state, buf, size);
 		displaykey("after", buf, PACKET_BUF_SIZE(size));

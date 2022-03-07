@@ -422,7 +422,7 @@ handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	kv->value.peer = NULL;
 
 end:
-	size = msg_goodbye_ack_init(text);
+	size = msg_goodbye_ack_init(text, NULL);
 	send_packet(fd, peer, buf, size);
 	printf("sent %lu-byte (%lu-byte) message goodbye ack message\n",
 		size, PACKET_BUF_SIZE(size));

@@ -65,25 +65,33 @@ msg_fetch_rep_init(uint8_t *buf, uint8_t msgcount, size_t totalmsglength)
 }
 
 size_t
-msg_goodbye_init(uint8_t *buf)
+msg_goodbye_init(uint8_t *buf, const uint8_t cv[32])
 {
 	struct msg_goodbye_msg *msg = (struct msg_goodbye_msg *)PACKET_TEXT(buf);
 
 	msg->msg.proto = PROTO_MSG;
 	msg->msg.type = MSG_GOODBYE_MSG;
 	store16_le(msg->msg.len, MSG_GOODBYE_MSG_SIZE);
+	if (cv == NULL)
+		memset(msg->cv, 0, 32);
+	else
+		memcpy(msg->cv, cv, 32);
 
 	return padme_enc(MSG_GOODBYE_MSG_SIZE);
 }
 
 size_t
-msg_goodbye_ack_init(uint8_t *buf)
+msg_goodbye_ack_init(uint8_t *buf, const uint8_t cv[32])
 {
 	struct msg_goodbye_ack_msg *msg = (struct msg_goodbye_ack_msg *)buf;
 
 	msg->msg.proto = PROTO_MSG;
 	msg->msg.type = MSG_GOODBYE_ACK;
 	store16_le(msg->msg.len, MSG_GOODBYE_ACK_SIZE);
+	if (cv == NULL)
+		memset(msg->cv, 0, 32);
+	else
+		memcpy(msg->cv, cv, 32);
 
 	return padme_enc(MSG_GOODBYE_ACK_SIZE);
 }
