@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,8 @@
 #include "err.h"
 #include "fibre.h"
 #include "io.h"
+#include "util.h"
+#include "packet.h"
 
 int
 setclientup(const char *addr, const char *port)
@@ -93,108 +96,40 @@ sstosa(struct sockaddr_storage *ss)
 	return (struct sockaddr *)ss;
 }
 
-size_t
-safe_read(int fd, uint8_t *buf, size_t max_size_p1)
+const char *
+safe_read(size_t *nread, int fd, uint8_t *buf, size_t max_size_p1)
 {
-	ssize_t nread;
+	ssize_t n;
 
-	do nread = fibre_read(fd, buf, max_size_p1);
-	while (nread == -1 && errno == EINTR);
+	do n = fibre_read(fd, buf, max_size_p1);
+	while (n == -1 && errno == EINTR);
 
-	if (nread == -1 && errno != EAGAIN)
-		err(EXIT_FAILURE, "Could not read from socket");
-	if ((size_t)nread == max_size_p1) {
-		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
-	}
-
-	return nread;
+	if (n == -1)
+		return errnowrap("read");
+	
+	*nread = n;
+	return NULL;
 }
 
-size_t
-safe_read_nonblock(int fd, uint8_t *buf, size_t max_size_p1)
+const char *
+safe_recvfrom(size_t *nread, int fd, uint8_t *buf, size_t max_size_p1,
+		struct sockaddr *peeraddr, socklen_t *peeraddr_len)
 {
-	ssize_t nread;
-
-	do nread = recv(fd, buf, max_size_p1, MSG_DONTWAIT);
-	while (nread == -1 && errno == EINTR);
-
-	if (nread == -1 && errno == EAGAIN)
-		return 0;
-	if (nread == -1)
-		err(EXIT_FAILURE, "Could not read from socket");
-	if ((size_t)nread == max_size_p1)
-		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
-
-	return nread;
-}
-
-size_t
-safe_read_timeout(int fd, uint8_t *buf, size_t max_size_p1, time_t timeout)
-{
-	struct timeval tv = { .tv_sec = timeout, .tv_usec = 0 };
-	ssize_t nread;
-
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
-
-	do nread = recv(fd, buf, max_size_p1, 0);
-	while (nread == -1 && errno == EINTR);
-
-	tv.tv_sec = 0;
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
-
-	if (nread == -1 && errno == EAGAIN)
-		return 0;
-
-	if (nread == -1)
-		err(EXIT_FAILURE, "Could not read from socket.");
-	if ((size_t)nread == max_size_p1)
-		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
-
-	return nread;
-}
-
-size_t
-safe_recvfrom(int fd, uint8_t *buf, size_t max_size_p1,
-		struct sockaddr_storage *peeraddr, socklen_t *peeraddr_len)
-{
-	ssize_t nread;
+	ssize_t n;
 
 	do {
 		*peeraddr_len = sizeof(struct sockaddr_storage);
-		nread = fibre_recvfrom(fd, buf, max_size_p1, 0,
-			sstosa(peeraddr), peeraddr_len);
-	} while (nread == -1 && errno == EINTR);
+		n = fibre_recvfrom(fd, buf, max_size_p1, 0,
+			peeraddr, peeraddr_len);
+	} while (n == -1 && errno == EINTR);
+	if (n == -1)
+		return errnowrap("recvfrom");
 
-
-	if (nread == -1)
-		err(EXIT_FAILURE, "Could not read from socket.");
-	if ((size_t)nread == max_size_p1)
-		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
-
-	return nread;
+	*nread = n;
+	return NULL;
 }
 
-size_t
-safe_recvfrom_nonblock(int fd, uint8_t *buf, size_t max_size_p1,
-		struct sockaddr_storage *peeraddr, socklen_t *peeraddr_len)
-{
-	ssize_t nread;
-
-	do {
-		*peeraddr_len = sizeof(struct sockaddr_storage);
-		nread = fibre_recvfrom(fd, buf, max_size_p1, MSG_DONTWAIT,
-			sstosa(peeraddr), peeraddr_len);
-	} while (nread == -1 && errno == EINTR);
-
-	if (nread == -1)
-		err(EXIT_FAILURE, "Could not read from socket.");
-	if ((size_t)nread == max_size_p1)
-		errx(EXIT_FAILURE, "Peer sent a packet that is too large.");
-
-	return nread;
-}
-
-void
+const char *
 safe_write(int fd, const uint8_t *buf, size_t size)
 {
 	ssize_t result;
@@ -202,10 +137,12 @@ safe_write(int fd, const uint8_t *buf, size_t size)
 	do result = fibre_write(fd, buf, size);
 	while (result == -1 && errno == EINTR);
 	if (result == -1)
-		err(EXIT_FAILURE, "Could not write to socket.");
+		return errnowrap("write");
+
+	return NULL;
 }
 
-void
+const char *
 safe_sendto(int fd, const uint8_t *buf, size_t size,
 		struct sockaddr *peeraddr, socklen_t peeraddr_len)
 {
@@ -213,20 +150,8 @@ safe_sendto(int fd, const uint8_t *buf, size_t size,
 
 	do result = fibre_sendto(fd, buf, size, 0, peeraddr, peeraddr_len);
 	while (result == -1 && errno == EINTR);
-
 	if (result == -1)
-		err(EXIT_FAILURE, "Could not write to socket.");
-}
+		return errnowrap("sendto");
 
-void
-safe_sendto_nonblock(int fd, const uint8_t *buf, size_t size,
-		struct sockaddr *peeraddr, socklen_t peeraddr_len)
-{
-	ssize_t result;
-
-	do result = fibre_sendto(fd, buf, size, MSG_DONTWAIT, peeraddr, peeraddr_len);
-	while (result == -1 && errno == EINTR);
-
-	if (result == -1)
-		err(EXIT_FAILURE, "Could not write to socket.");
+	return NULL;
 }

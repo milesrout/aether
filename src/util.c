@@ -14,7 +14,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <errno.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -219,4 +221,33 @@ sign_key(uint8_t sig[64],
 	memcpy(msg + 4, key, 32);
 	crypto_sign(sig, isk_prv, isk, msg, 36);
 	crypto_wipe(msg, 36);
+}
+
+const char *
+errfmt(const char *fmt, ...)
+{
+	va_list args;
+	char *str;
+	const char *ret;
+
+	va_start(args, fmt);
+	if (-1 == vasprintf(&str, fmt, args)) {
+		perror("vasprintf");
+		ret = fmt;
+	} else ret = str;
+
+	va_end(args);
+	return ret;
+}
+
+const char *
+errwrap(const char *pre, const char *post)
+{
+	return errfmt("%s: %s", pre, post);
+}
+
+const char *
+errnowrap(const char *pre)
+{
+	return errwrap(pre, strerror(errno));
 }

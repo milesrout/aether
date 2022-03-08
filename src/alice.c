@@ -39,6 +39,9 @@
 #include "isks.h"
 #include "persist.h"
 
+static void print_ident(const struct ident_state *ident);
+static void print_p2ptable(const struct p2pstate *p2ptable);
+
 int
 prompt_line(char **buf, size_t *len, size_t *size, const char *prompt)
 {
@@ -63,19 +66,19 @@ int
 load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 		const char *filename, const char *password, size_t password_len)
 {
-	uint32_t opk_count, spk_count, p2p_count;
+	uint32_t opk_count, spk_count, name_len, p2p_count;
 	size_t left = 0uL, size = 0uL;
-	uint8_t *keys;
 	const uint8_t *cur;
 	struct keypair kp;
+	int result = -1;
+	uint8_t *keys;
+	char *name;
 	unsigned i;
 
-	if (persist_read(&keys, &left, filename, password, password_len)) {
-		warnx("persist_read");
+	if (persist_read(&keys, &size, filename, password, password_len))
 		goto fail;
-	}
 
-	size = left;
+	left = size;
 	cur = keys;
 	ident->opks = ident->spks = NULL;
 	*p2ptable = NULL;
@@ -100,23 +103,29 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 		stbds_hmputs(ident->spks, kp);
 	}
 
+	if (persist_load32_le(&name_len, &cur, &left)) goto fail;
+	name = malloc(name_len + 1);
+	if (!name) free(name);
+	if (persist_loadbytes(name, name_len, &cur, &left)) goto fail;
+	name[name_len] = '\0';
+	ident->username = name;
+
 	if (persist_load32_le(&p2p_count, &cur, &left)) goto fail;
 	for (i = 0u; i < p2p_count; i++) {
+		struct packetkey_bucket *bucket;
+		uint32_t namelen, skipcount;
+		struct p2pstate p2pobj, *p2p;
 		uint8_t prerecv;
-		struct p2pstate *p2p;
-		uint32_t namelen;
 		uint8_t *name;
-
-		stbds_hmputs((*p2ptable), (struct p2pstate){0});
-		p2p = &(*p2ptable)[i];
+		unsigned j;
 
 		if (persist_loadbytes(&prerecv, 1, &cur, &left)) goto fail;
-		p2p->state.ra.rac.prerecv = prerecv;
+		p2pobj.state.ra.rac.prerecv = prerecv;
 
-		if (prerecv)
-			left += 32 * 5;
+		if (persist_loadbytes(p2pobj.key.data, 32, &cur, &left)) goto fail;
+		stbds_hmputs((*p2ptable), p2pobj);
+		p2p = &(*p2ptable)[i];
 
-		if (persist_loadbytes(p2p->key.data,              32, &cur, &left)) goto fail;
 		if (persist_loadbytes(p2p->state.ra.rac.dhkr,     32, &cur, &left)) goto fail;
 		if (persist_loadbytes(p2p->state.ra.rac.dhks,     32, &cur, &left)) goto fail;
 		if (persist_loadbytes(p2p->state.ra.rac.dhks_prv, 32, &cur, &left)) goto fail;
@@ -138,28 +147,86 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 			if (persist_loadbytes(p2p->state.rap.spkb, 32, &cur, &left)) goto fail;
 			if (persist_loadbytes(p2p->state.rap.opkb, 32, &cur, &left)) goto fail;
 		}
+
+		if (persist_load32_le(&skipcount, &cur, &left)) goto fail;
+
+		p2p->state.ra.rac.spare_buckets = NULL;
+		p2p->state.ra.rac.spare_packetkeys = NULL;
+
+		if (skipcount == 0) {
+			bucket = p2p->state.ra.rac.skipped = NULL;
+		} else {
+			bucket = p2p->state.ra.rac.skipped = malloc(sizeof *bucket);
+			assert(bucket);
+		}
+
+		for (j = 0u; j < skipcount; j++) {
+			struct packetkey *packetkey;
+			uint32_t bucketlen;
+			unsigned k;
+
+			if (persist_loadbytes(bucket->hk, 32, &cur, &left)) goto fail;
+			if (persist_load32_le(&bucketlen,     &cur, &left)) goto fail;
+
+			if (bucketlen == 0) {
+				packetkey = bucket->first = NULL;
+			} else {
+				packetkey = bucket->first = malloc(sizeof *packetkey);
+				assert(packetkey);
+			}
+
+			for (k = 0u; k < bucketlen; k++) {
+
+				packetkey = malloc(sizeof *packetkey);
+				assert(packetkey);
+
+				if (persist_load32_le(&packetkey->msn,     &cur, &left)) goto fail;
+				if (persist_loadbytes(packetkey->mk,   32, &cur, &left)) goto fail;
+
+				if (k == bucketlen - 1) {
+					packetkey->next = NULL;
+				} else {
+					packetkey = packetkey->next = malloc(sizeof *packetkey);
+					assert(packetkey);
+				}
+			}
+
+			if (j == skipcount - 1) {
+				bucket->next = NULL;
+			} else {
+				bucket = bucket->next = malloc(sizeof *bucket);
+				assert(bucket);
+			}
+		}
+
 		if (persist_load32_le(&namelen, &cur, &left)) goto fail;
 		name = malloc(namelen + 1);
+
 		if (persist_loadbytes(name, namelen, &cur, &left)) goto fail;
 		name[namelen] = 0;
 		p2p->username = (const char *)name;
 	}
 
-	return 0;
+	result = 0;
+
 fail:
-	fprintf(stderr, "%p %p %lu %lu\n", keys, cur, size, left);
-	return -1;
+	return result;
 }
 
-static
+extern 
+int
+store_keys(const char *filename, const char *password, size_t password_len,
+		const struct ident_state *ident,
+		struct p2pstate *p2ptable);
+
 int
 store_keys(const char *filename, const char *password, size_t password_len,
 		const struct ident_state *ident,
 		struct p2pstate *p2ptable)
 {
-	size_t size, left;
-	uint8_t *buf = NULL, *cur;
-	uint32_t opk_count = 0u, spk_count = 0u, p2p_count = 0u;
+	size_t size = 0, left = 0;
+	uint8_t *buf = NULL, *cur = NULL;
+	uint32_t opk_count = 0u, spk_count = 0u, p2p_count = 0u, name_len = 0u;
 	int result = -1;
 	unsigned i;
 
@@ -167,22 +234,20 @@ store_keys(const char *filename, const char *password, size_t password_len,
 	spk_count = stbds_hmlenu(ident->spks);
 	p2p_count = stbds_hmlenu(p2ptable);
 
-	left = size = 128
-		+ 4 + opk_count * (32 + 32)
-		+ 4 + spk_count * (32 + 32 + 64)
-		+ 4 + p2p_count * (32 + (1 + (32 * 10) + 64 + 4 * 3) + 4);
+	/* 3300 should be enough - but if it isn't, it can grow */
+	size = 2200;
+loop:	size += (size / 2);
+	left = size;
 
-	buf = malloc(size);
-	if (buf == NULL)
-		errg(fail, "malloc");
-	cur = buf;
+	cur = buf = calloc(1, size);
+	assert(buf);
 
 	if (persist_storebytes(ident->isk,     32, &cur, &left)) goto fail;
 	if (persist_storebytes(ident->isk_prv, 32, &cur, &left)) goto fail;
 	if (persist_storebytes(ident->ik,      32, &cur, &left)) goto fail;
 	if (persist_storebytes(ident->ik_prv,  32, &cur, &left)) goto fail;
 
-	if (persist_store32_le(&opk_count,         &cur, &left)) goto fail;
+	if (persist_store32_le(&opk_count, &cur, &left)) goto fail;
 	for (i = 0u; i < opk_count; i++) {
 		if (persist_storebytes(ident->opks[i].key.data, 32, &cur, &left)) goto fail;
 		if (persist_storebytes(ident->opks[i].prv,      32, &cur, &left)) goto fail;
@@ -195,14 +260,21 @@ store_keys(const char *filename, const char *password, size_t password_len,
 		if (persist_storebytes(ident->spks[i].sig,      64, &cur, &left)) goto fail;
 	}
 
+	if (ident->username == NULL) {
+		if (persist_store32_le(&name_len, &cur, &left)) goto fail;
+	} else {
+		name_len = strlen(ident->username);
+		if (persist_store32_le(&name_len, &cur, &left)) goto fail;
+		if (persist_storebytes(ident->username, name_len, &cur, &left)) goto fail;
+	}
+
 	if (persist_store32_le(&p2p_count, &cur, &left)) goto fail;
 	for (i = 0u; i < p2p_count; i++) {
 		uint32_t namelen = strlen(p2ptable[i].username);
 		uint8_t prerecv = p2ptable[i].state.ra.rac.prerecv ? 1 : 0;
-
-		left += namelen;
-		if (prerecv)
-			left += 32 * 5;
+		uint8_t *pskipcount;
+		uint32_t skipcount = 0;
+		struct packetkey_bucket *bucket;
 
 		if (persist_storebytes(&prerecv, 1, &cur, &left)) goto fail;
 		if (persist_storebytes(p2ptable[i].key.data,              32, &cur, &left)) goto fail;
@@ -227,19 +299,61 @@ store_keys(const char *filename, const char *password, size_t password_len,
 			if (persist_storebytes(p2ptable[i].state.rap.spkb, 32, &cur, &left)) goto fail;
 			if (persist_storebytes(p2ptable[i].state.rap.opkb, 32, &cur, &left)) goto fail;
 		}
+
+		/* initially set this to zero, then go back and correct it
+		 * later once we know the correct value */
+		pskipcount = cur;
+		if (persist_store32_le(&skipcount, &cur, &left)) goto fail;
+
+		bucket = p2ptable[i].state.ra.rac.skipped;
+		while (bucket != NULL) {
+			struct packetkey *packetkey;
+			uint8_t *pbucketlen;
+			uint32_t bucketlen = 0;
+
+			skipcount++;
+
+			if (persist_storebytes(bucket->hk, 32, &cur, &left)) goto fail;
+			/* initially set this to zero, then go back and correct
+			 * it later once we know the correct value */
+			pbucketlen = cur;
+			if (persist_store32_le(&bucketlen,     &cur, &left)) goto fail;
+
+			packetkey = bucket->first;
+			while (packetkey != NULL) {
+				bucketlen++;
+
+				if (persist_store32_le(&packetkey->msn,     &cur, &left)) goto fail;
+				if (persist_storebytes(packetkey->mk,   32, &cur, &left)) goto fail;
+
+				packetkey = packetkey->next;
+			}
+			store32_le(pbucketlen, bucketlen);
+
+			bucket = bucket->next;
+		}
+		store32_le(pskipcount, skipcount);
+
 		if (persist_store32_le(&namelen, &cur, &left)) goto fail;
 		if (persist_storebytes((const uint8_t *)p2ptable[i].username, namelen, &cur, &left)) goto fail;
 	}
 
 	if (persist_write(filename, buf, size, password, password_len))
-		goto fail;
+		goto end;
 
 	result = 0;
+	goto end;
+
 fail:
-	fprintf(stderr, "%p %p %lu %lu\n", buf, cur, size, left);
+	free(buf);
+	goto loop;
+
+end:
 	if (buf) free(buf);
 	return result;
 }
+
+int save_on_quit;
 
 int
 alice(int argc, char **argv)
@@ -258,6 +372,7 @@ alice(int argc, char **argv)
 	size_t nread, size;
 	size_t username_len, username_size;
 	size_t password_len, password_size;
+	const char *error;
 
 	/* argument handling */
 	if (argc < 2 || argc > 5)
@@ -266,6 +381,8 @@ alice(int argc, char **argv)
 	mode = argc < 3? "new" : argv[2];
 	host = argc < 4? "127.0.0.1" : argv[3];
 	port = argc < 5? "3443" : argv[4];
+
+	save_on_quit = 1;
 
 	/* load or generate keys */
 	if (prompt_line(&password, &password_len, &password_size, "Password"))
@@ -295,7 +412,9 @@ alice(int argc, char **argv)
 	crypto_wipe(buf, PACKET_HELLO_SIZE);
 
 	/* recv REPLY message */
-	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
+	error = safe_read(&nread, fd, buf, PACKET_REPLY_SIZE + 1);
+	if (error)
+		errx(EXIT_FAILURE, "%s", error);
 	if (nread < PACKET_REPLY_SIZE)
 		err(EXIT_FAILURE, "Received invalid reply from server");
 	if (packet_hshake_cfinish(&state, buf))
@@ -303,16 +422,17 @@ alice(int argc, char **argv)
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	/* REGISTER username/SPKSUB/OPKSSUB keys */
-	if (mode[0] == 'n') {
-		if (prompt_line(&username, &username_len, &username_size, "Username"))
-			err(EXIT_FAILURE, "Could not read username");
+	if (mode[0] != 'n')
+		goto skip_new_stuff;
 
-		if (register_identity(&ident, &state, fd, buf, username))
-			err(EXIT_FAILURE, "Cannot register username %s", username);
+	if (prompt_line(&username, &username_len, &username_size, "Username"))
+		err(EXIT_FAILURE, "Could not read username");
 
-		if (store_keys("keys.enc", password, password_len, &ident, p2ptable))
-			errx(EXIT_FAILURE, "Could not store keys in file `%s'", "keys.enc");
-	}
+	if (register_identity(&ident, &state, fd, buf, username))
+		errx(EXIT_FAILURE, "Cannot register username %s", username);
+
+	if (store_keys("keys.enc", password, password_len, &ident, p2ptable))
+		errx(EXIT_FAILURE, "Could not store keys in file `%s'", "keys.enc");
 
 	/* send LOOKUP */
 	bobstate.username = "bob";
@@ -322,7 +442,9 @@ alice(int argc, char **argv)
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
 	/* recv LOOKUP reply */
-	nread = safe_read(fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, 65536);
+	if (error)
+		errx(EXIT_FAILURE, "%s", error);
 	if (nread < PACKET_BUF_SIZE(0))
 		err(EXIT_FAILURE, "Received a message that is too small");
 	if (packet_unlock(&state, buf, nread))
@@ -349,7 +471,9 @@ alice(int argc, char **argv)
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
 	/* recv KEYREQ reply */
-	nread = safe_read(fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, 65536);
+	if (error)
+		errx(EXIT_FAILURE, "%s", error);
 	if (nread < PACKET_BUF_SIZE(0))
 		err(EXIT_FAILURE, "Received a message that is too small");
 	if (packet_unlock(&state, buf, nread))
@@ -377,8 +501,9 @@ alice(int argc, char **argv)
 			p2pstate->key.data, ikb, spkb, spkb_sig, opkb))
 		err(EXIT_FAILURE, "Error preparing handshake");
 
+skip_new_stuff:
 	/* Send and receive messages */
-	interactive(&ident, &state, &p2ptable, fd, username);
+	interactive(&ident, &state, &p2ptable, fd);
 
 	exit(EXIT_SUCCESS);
 }

@@ -55,16 +55,31 @@ static
 uint8_t zero_key[32] = {0};
 
 static
+const char *
+send_packet(union packet_state *state, int fd, uint8_t *buf, size_t size)
+{
+	const char *error;
+
+	packet_lock(state, buf, size);
+	error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
+	crypto_wipe(buf, PACKET_BUF_SIZE(size));
+
+	return error;
+}
+
+static
 int
 handle_ident_replies(union packet_state *state, int fd, uint8_t buf[65536])
 {
-	size_t nread;
 	uint8_t *text = PACKET_TEXT(buf);
-	size_t size;
+	size_t nread, size;
+	const char *error;
 
-	nread = safe_read(fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, 65536);
+	if (error)
+		errg(fail, "handle_ident_replies: Failed to read from socket: %s", error);
+
 	size = PACKET_TEXT_SIZE(nread);
-
 	if (nread < PACKET_BUF_SIZE(0))
 		errg(fail, "handle_ident_replies: Received a message that is too small");
 
@@ -128,9 +143,10 @@ static
 int
 get_username(const char **username_storage, union packet_state *state, int fd, uint8_t isk[32])
 {
-	size_t size, nread;
-	int result = -1;
 	char *username = NULL;
+	size_t size, nread;
+	const char *error;
+	int result = -1;
 	uint8_t *buf;
 
 	buf = calloc(1, 65536);
@@ -138,12 +154,15 @@ get_username(const char **username_storage, union packet_state *state, int fd, u
 		return result;
 
 	size = ident_reverse_lookup_msg_init(PACKET_TEXT(buf), isk);
-	packet_lock(state, buf, size);
-	safe_write(fd, buf, PACKET_BUF_SIZE(size));
-	crypto_wipe(buf, PACKET_BUF_SIZE(size));
+	error = send_packet(state, fd, buf, size);
+	if (error)
+		errg(fail, "Failed to send packet: %s", error);
 
 	fibre_awaitfd(fd, EPOLLIN);
-	nread = safe_read(fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, 65536);
+	if (error)
+		errg(fail, "Failed to read from socket: %s", error);
+
 	if (nread < PACKET_BUF_SIZE(0))
 		errg(fail, "Received a message that is too small");
 
@@ -178,6 +197,8 @@ fail:
 	return result;
 }
 
+extern int save_on_quit;
+
 static
 void
 handle_input(union packet_state *state, struct p2pstate **p2ptable,
@@ -186,6 +207,7 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 	struct p2pstate *p2pstate;
 	uint8_t text[258] = {0};
 	uint16_t text_size;
+	const char *error;
 	size_t size;
 	int n;
 
@@ -197,22 +219,33 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 
 	getchar();
 
-	fprintf(stderr, "\033[F\b<%s> %s\n", username, text);
-
 	text_size = strlen((char*)(text)) + 1;
 
-	if (strcmp((const char *)text, "/quit") == 0) {
-		crypto_wipe(buf, 65536);
-		size = msg_goodbye_init(buf, NULL);
-		displaykey("before", buf, PACKET_BUF_SIZE(size));
-		packet_lock(state, buf, size);
-		displaykey("after", buf, PACKET_BUF_SIZE(size));
-	} else {
-		size = send_message(state, &(*p2ptable)->state,
-			(*p2ptable)->key.data, buf, text, text_size);
+	if (text[0] == '/') {
+		if (strcmp((const char *)text, "/quit") == 0) {
+			crypto_wipe(buf, 65536);
+			size = msg_goodbye_init(buf, NULL);
+			error = send_packet(state, fd, buf, size);
+			if (error)
+				errx(EXIT_FAILURE, "Failed to send GOODBYE: %s", error);
+		} else {
+			printf("Unknown command: %s\n", text);
+		}
+		return;
 	}
-	safe_write(fd, buf, PACKET_BUF_SIZE(size));
+
+	/* just grab the first item of the table if it exists
+	 * this is dreadfully unsafe, but works fine if alice speaks first
+	 */
+	p2pstate = *p2ptable;
+
+	fprintf(stderr, "\033[F\b<%s> %s\n", username, text);
+	size = send_message(state, &p2pstate->state,
+		p2pstate->key.data, buf, text, text_size);
+	error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
+	if (error)
+		errx(EXIT_FAILURE, "Failed to send message: %s", error);
 }
 
 static
@@ -221,7 +254,6 @@ try_unlock_raw_message(union packet_state *p2pstate,
 		struct msg_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
-
 	if (!packet_unlock(p2pstate, content->text, load16_le(content->len))) {
 		*text = (const char *)(2 + PACKET_TEXT(content->text));
 		*text_size = load16_le(PACKET_TEXT(content->text));
@@ -404,24 +436,35 @@ fail:
 	return result;
 }
 
+extern
+int
+store_keys(const char *filename, const char *password, size_t password_len,
+		const struct ident_state *ident,
+		struct p2pstate *p2ptable);
+
 static
 void
 handle_packet(struct ident_state *ident, union packet_state *state,
 		struct p2pstate **p2ptable, int fd, uint8_t *buf)
 {
+	const char *error;
+	struct msg *msg;
 	size_t nread;
-
-	while ((nread = safe_read(fd, buf, 65536))) {
-		struct msg *msg = (struct msg *)PACKET_TEXT(buf);
+	
+	for (;;) {
+		error = safe_read(&nread, fd, buf, 65536);
+		if (error)
+			errg(loop_continue, "handle_packet: Could not read from socket: %s", error);
+		msg = (struct msg *)PACKET_TEXT(buf);
 
 		if (nread < PACKET_BUF_SIZE(sizeof(struct msg)))
 			errg(loop_continue, "handle_packet: Received a packet that is too small to be valid");
 
 		if (packet_unlock(state, buf, nread))
-			errg(loop_continue, "handle_packet: Message cannot be decrypted.\n");
+			errg(loop_continue, "handle_packet: Message cannot be decrypted");
 
 		if (PACKET_TEXT_SIZE(nread) < load16_le(msg->len))
-			errg(loop_continue, "handle_packet: Received an improperly formed packet (invalid length (%lu < %lu)).\n",
+			errg(loop_continue, "handle_packet: Received an improperly formed packet (invalid length (%lu < %lu))",
 				PACKET_TEXT_SIZE(nread), load16_le(msg->len));
 
 		switch (msg->proto) {
@@ -450,11 +493,13 @@ handle_packet(struct ident_state *ident, union packet_state *state,
 			goto loop_invalid;
 		}
 	loop_invalid:
-		errg(loop_continue, "handle_packet: Message from server has invalid type or protocol (%d, %d).\n",
+		errg(loop_continue, "handle_packet: Message from server has invalid type or protocol (%d, %d)",
 			msg->proto, msg->type);
 	loop_fail:
-		errg(loop_continue, "handle_packet: Unspecified error.\n");
+		errg(loop_continue, "handle_packet: Unspecified error");
 	loop_quit:
+		if (save_on_quit)
+			store_keys("keys.enc", "alice", strlen("alice"), ident, *p2ptable);
 		exit(EXIT_SUCCESS);
 	loop_continue:
 		crypto_wipe(buf, nread);
@@ -465,7 +510,6 @@ struct client_ctx {
 	struct ident_state *ident;
 	union packet_state *state;
 	struct p2pstate **p2ptable;
-	const char *username;
 };
 
 static
@@ -476,6 +520,7 @@ fetch_thread(int fd, void *arg)
 	struct timespec ts = {15};
 	uint64_t expirations;
 	uint8_t buf[1024];
+	const char *error;
 	size_t size;
 	int timerfd;
 	ssize_t n;
@@ -492,8 +537,10 @@ fetch_thread(int fd, void *arg)
 
 		size = msg_fetch_init(buf);
 		packet_lock(ctx->state, buf, size);
-		safe_write(fd, buf, PACKET_BUF_SIZE(size));
+		error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
 		crypto_wipe(buf, PACKET_BUF_SIZE(size));
+		if (error)
+			warnx("Could not send FETCH message: %s", error);
 	}
 }
 
@@ -507,7 +554,8 @@ input_thread(int fd, void *arg)
 	fcntl_nonblock(STDIN_FILENO);
 
 	for (;;) {
-		handle_input(ctx->state, ctx->p2ptable, fd, buf, ctx->username);
+		handle_input(ctx->state, ctx->p2ptable, fd, buf,
+			ctx->ident->username);
 	}
 }
 
@@ -516,7 +564,7 @@ void
 handler_thread(int fd, void *arg)
 {
 	struct client_ctx *ctx = (struct client_ctx *)arg;
-	uint8_t buf[65536];
+	uint8_t buf[65536] = {0};
 
 	for (;;) {
 		handle_packet(ctx->ident, ctx->state, ctx->p2ptable, fd, buf);
@@ -525,10 +573,10 @@ handler_thread(int fd, void *arg)
 
 void
 interactive(struct ident_state *ident, union packet_state *state,
-		struct p2pstate **p2ptable, int fd, const char *username)
+		struct p2pstate **p2ptable, int fd)
 {
 	int dupfd1, dupfd2;
-	struct client_ctx ctx = {ident, state, p2ptable, username};
+	struct client_ctx ctx = {ident, state, p2ptable};
  
 	dupfd1 = fcntl(fd, F_DUPFD_CLOEXEC, 0);
 	if (dupfd1 == -1)
@@ -554,8 +602,9 @@ register_identity(struct ident_state *ident, union packet_state *state,
 	unsigned regn_state = 0;
 	struct pollfd pfds[1] = {{fd, POLLIN}};
 
+	ident->username = name;
+
 	while (regn_state < 3) {
-		/* fprintf(stderr, "regn_state: %u\n", regn_state); */
 		if (regn_state == 0)
 			size = ident_register_msg_init(ident, PACKET_TEXT(buf), name);
 		else if (regn_state == 1)
@@ -594,6 +643,7 @@ bob(int argc, char **argv)
 	struct ident_state ident = {0};
 	struct p2pstate *p2ptable = NULL;
 	uint8_t buf[65536] = {0};
+	const char *error;
 	size_t nread;
 
 	if (argc < 2 || argc > 4)
@@ -601,6 +651,8 @@ bob(int argc, char **argv)
 
 	host = argc < 3? "127.0.0.1" : argv[2];
 	port = argc < 4? "3443" : argv[3];
+
+	save_on_quit = 0;
 
 	generate_sig_keypair(ident.isk, ident.isk_prv);
 	crypto_from_eddsa_public(ident.ik,      ident.isk);
@@ -618,7 +670,9 @@ bob(int argc, char **argv)
 	safe_write(fd, buf, PACKET_HELLO_SIZE);
 	crypto_wipe(buf, PACKET_HELLO_SIZE);
 
-	nread = safe_read(fd, buf, PACKET_REPLY_SIZE + 1);
+	error = safe_read(&nread, fd, buf, PACKET_REPLY_SIZE + 1);
+	if (error)
+		errx(EXIT_FAILURE, "Could not read from socket: %s", error);
 	if (nread != PACKET_REPLY_SIZE)
 		errx(EXIT_FAILURE, "Received invalid REPLY from server");
 	if (packet_hshake_cfinish(&state, buf))
@@ -628,7 +682,7 @@ bob(int argc, char **argv)
 	if (register_identity(&ident, &state, fd, buf, "bob"))
 		errx(EXIT_FAILURE, "Cannot register username bob");
 
-	interactive(&ident, &state, &p2ptable, fd, "bob");
+	interactive(&ident, &state, &p2ptable, fd);
 
 	exit(EXIT_SUCCESS);
 }

@@ -27,6 +27,18 @@
 #include "util.h"
 
 size_t
+msg_nack_init(uint8_t *buf)
+{
+	struct msg_nack_msg *msg = (struct msg_nack_msg *)PACKET_TEXT(buf);
+
+	msg->msg.proto = PROTO_MSG;
+	msg->msg.type = MSG_NACK;
+	store16_le(msg->msg.len, MSG_NACK_SIZE);
+
+	return padme_enc(MSG_NACK_SIZE);
+}
+
+size_t
 msg_fetch_init(uint8_t *buf)
 {
 	struct msg_fetch_msg *msg = (struct msg_fetch_msg *)PACKET_TEXT(buf);

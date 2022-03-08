@@ -24,7 +24,7 @@ extern int alice(int argc, char **argv);
 extern int bob(int argc, char **argv);
 extern void interactive(struct ident_state *ident,
 	union packet_state *state, struct p2pstate **p2ptable,
-	int fd, const char *username);
+	int fd);
 extern int register_identity(struct ident_state *ident,
 	union packet_state *state,
 	int fd, uint8_t buf[65536], const char *name);

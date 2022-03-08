@@ -14,7 +14,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define PROTO_IDENT ((uint8_t)1)
+#define PROTO_IDENT ((uint8_t)2)
 #define IDENT_OPKSSUB_MSG ((uint8_t)2)
 #define IDENT_OPKSSUB_ACK ((uint8_t)3)
 #define IDENT_SPKSUB_MSG ((uint8_t)4)
@@ -110,6 +110,7 @@ struct ident_state {
 	uint8_t ik_prv[32];
 	struct keypair *opks;
 	struct keypair *spks;
+	const char *username;
 };
 extern size_t ident_opkssub_msg_init(struct ident_state *, uint8_t *buf);
 extern size_t ident_opkssub_ack_init(uint8_t *buf, uint8_t result);

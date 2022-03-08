@@ -112,6 +112,16 @@ union packet_state {
 	struct packet_ratchet_dstate rad;
 	struct packet_ratchet_astate_prerecv rap;
 };
+struct packetkey {
+	uint32_t msn;
+	uint8_t mk[32];
+	struct packetkey *next;
+};
+struct packetkey_bucket {
+	uint8_t hk[32];
+	struct packetkey *first;
+	struct packetkey_bucket *next;
+};
 struct hshake_hello_msg {
 	uint8_t hidden[32];
 	uint8_t mac[16];

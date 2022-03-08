@@ -80,18 +80,6 @@ static const uint8_t zero_key[32];
 static struct packetkey_bucket *spare_buckets = NULL;
 static struct packetkey *spare_packetkeys = NULL;
 
-struct packetkey {
-	uint32_t msn;
-	uint8_t mk[32];
-	struct packetkey *next;
-};
-
-struct packetkey_bucket {
-	uint8_t hk[32];
-	struct packetkey *first;
-	struct packetkey_bucket *next;
-};
-
 size_t
 padme_enc(size_t l)
 {

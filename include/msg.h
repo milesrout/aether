@@ -19,3 +19,6 @@ struct msg {
 	uint8_t type;
 	uint8_t len[2];
 };
+
+extern const char *msg_proto(uint8_t proto);
+extern const char *msg_type(uint8_t proto, uint8_t type);

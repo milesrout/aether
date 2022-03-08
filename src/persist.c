@@ -30,7 +30,11 @@
 #include "util.h"
 
 #define ARGON2I_ITERATIONS 3
+#ifdef BUILD_VALGRIND
+#define ARGON2I_BLOCKS 100
+#else
 #define ARGON2I_BLOCKS 100000
+#endif
 #define ARGON2I_BLOCK_SIZE 1024
 
 #define NONCE_SIZE 24

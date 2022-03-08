@@ -14,7 +14,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define PROTO_MSG ((uint8_t)2)
+#define PROTO_MSG ((uint8_t)3)
+#define MSG_NACK ((uint8_t)1)
 #define MSG_FORWARD_MSG ((uint8_t)2)
 #define MSG_FORWARD_ACK ((uint8_t)3)
 #define MSG_FETCH_MSG ((uint8_t)4)
@@ -22,6 +23,10 @@
 #define MSG_IMMEDIATE ((uint8_t)6)
 #define MSG_GOODBYE_MSG ((uint8_t)8)
 #define MSG_GOODBYE_ACK ((uint8_t)9)
+struct msg_nack_msg {
+	struct msg msg;
+};
+#define MSG_NACK_SIZE (sizeof(struct msg_nack_msg))
 struct msg_forward_msg {
 	struct msg msg;
 	uint8_t isk[32];
@@ -63,6 +68,7 @@ struct msg_fetch_content_msg {
 };
 #define MSG_FETCH_CONTENT_BASE_SIZE (sizeof(struct msg_fetch_content_msg))
 #define MSG_FETCH_CONTENT_SIZE(n) (MSG_FETCH_CONTENT_BASE_SIZE + (n))
+extern size_t msg_nack_init(uint8_t *buf);
 extern size_t msg_forward_ack_init(uint8_t *buf, uint8_t result);
 extern size_t msg_fetch_rep_init(uint8_t *buf, uint8_t message_count, size_t totalmsglength);
 extern size_t msg_fetch_init(uint8_t *buf);

@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/poll.h>
@@ -382,28 +383,36 @@ int
 fibre_store_poll(struct fibre_store_list *ready,
 		struct fibre_store_list *waiting)
 {
-	struct epoll_event events[8];
+	struct epoll_event ev[8];
+	const char *opterrstring;
+	int sockerr, opterr;
+	struct fibre *f;
 	ptrdiff_t i;
 	int count;
 
-	do count = epoll_wait(waiting->fsl_epfd, events, 8, 0);
+	do count = epoll_wait(waiting->fsl_epfd, ev, 8, 0);
 	while (count == -1 && errno == EINTR);
 	if (count == -1)
 		err(EXIT_FAILURE, "epoll_wait");
 
 	for (i = 0; i < count; i++) {
-		struct fibre_store_node *fsn = events[i].data.ptr;
-		struct fibre *f = &fsn->fsn_fibre;
+		f = &((struct fibre_store_node *)ev[i].data.ptr)->fsn_fibre;
 
-		if (events[i].events & EPOLLHUP)
-			return 5;
+		if (ev[i].events & EPOLLERR) {
+			socklen_t len = sizeof sockerr;
+			if (getsockopt(f->f_fd, SOL_SOCKET, SO_ERROR, &sockerr, &len)) {
+				opterr = errno;
+				opterrstring = strerror(opterr);
+				fprintf(stderr, "getsockopt(%d, SOL_SOCKET, SO_ERROR) -> %s\n",
+					f->f_fd, opterrstring);
+			}
+			errno = sockerr;
+			err(EXIT_FAILURE, "epoll_wait -> EPOLLERR");
+		}
 
-		if (events[i].events & EPOLLERR)
-			return 5;
-
-		transfer_node(events[i].data.ptr, ready, waiting);
-		events[i].events = 0;
-		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD, f->f_fd, &events[i]))
+		transfer_node(ev[i].data.ptr, ready, waiting);
+		ev[i].events = 0;
+		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD, f->f_fd, &ev[i]))
 			err(EXIT_FAILURE, "epoll_ctl(EPOLL_CTL_MOD)");
 	}
 
@@ -440,6 +449,9 @@ fibre_store_get_next_ready(struct fibre_store *store)
 		do ecount = epoll_wait(store->fs_epfd, &ev, 1, -1);
 		while (ecount == -1 && errno == EINTR);
 		assert(ecount == 1);
+
+		assert(ev.events & EPOLLIN);
+		assert(!(ev.events & EPOLLERR));
 
 		i = ev.data.u32;
 		f = try_fibre_store_poll_dequeue(&store->fs_lists[i],
