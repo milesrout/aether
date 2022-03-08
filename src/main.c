@@ -442,12 +442,8 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, si
 		goto reply;
 
 	packet_get_iskc(isk.data, &peer->state);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL) {
-		printf("!! can't fetch from nothing\n");
+	if (!(kv = stbds_hmgetp_null(ctx->table, isk)))
 		goto reply;
-	} else {
-		printf("!? there is something to fetch from\n");
-	}
 
 	/* TODO: set to maximum value that makes total packet size <= 64k */
 	/* slack = 32768; */
