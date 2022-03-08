@@ -402,9 +402,10 @@ try_decrypt_message(struct packet_ratchet_state_common *ra, struct packet *packe
 	uint8_t aad[AAD_SIZE];
 	int result = -1;
 
-	/* AAD = (AD||ENC_HEADER) */
-	memcpy(aad,           ra->ad,        AD_SIZE);
-	memcpy(aad + AD_SIZE, packet->hdr.msn, AAD_SIZE - AD_SIZE);
+	memcpy(aad,      ra->ad,          64);
+	memcpy(aad + 64, packet->hdr.msn, 4);
+	memcpy(aad + 68, packet->hdr.pn,  4);
+	memcpy(aad + 72, packet->hdr.pk,  32);
 
 	if (!try_skipped_message_keys(ra, packet, packet_size, aad, AAD_SIZE)) {
 		crypto_wipe(aad, AAD_SIZE);
@@ -458,8 +459,10 @@ encrypt_message(struct packet_ratchet_state_common *ra, struct packet *packet, s
 		packet->hdr.msn,
 		sizeof(struct packethdr) - offsetof(struct packethdr, msn));
 
-	memcpy(aad,           ra->ad,        AD_SIZE);
-	memcpy(aad + AD_SIZE, packet->hdr.msn, AAD_SIZE - AD_SIZE);
+	memcpy(aad,      ra->ad,          64);
+	memcpy(aad + 64, packet->hdr.msn, 4);
+	memcpy(aad + 68, packet->hdr.pn,  4);
+	memcpy(aad + 72, packet->hdr.pk,  32);
 
 	crypto_lock_aead(
 		packet->hdr.mac,

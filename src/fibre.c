@@ -42,7 +42,6 @@
 
 static void *mmap_allocate(size_t m);
 static void  mmap_deallocate(void *p, size_t n);
-static void *mmap_reallocate(void *q, size_t m, size_t n);
 
 static struct {
 	long int fstat_stack_allocs;
@@ -888,23 +887,4 @@ static void  mmap_deallocate(void *p, size_t n)
 #ifdef BUILD_VALGRIND
 	VALGRIND_FREELIKE_BLOCK(p, 0);
 #endif
-}
-
-static void *mmap_reallocate(void *q, size_t m, size_t n)
-{
-	void *p;
-
-	p = mremap(q, m, n, MREMAP_MAYMOVE);
-	if (p == MAP_FAILED)
-		err(EXIT_FAILURE, "Failed to reallocate (mremap)");
-#ifdef BUILD_VALGRIND
-	if (p == q)
-		VALGRIND_RESIZEINPLACE_BLOCK(p, m, n, 0);
-	else {
-		VALGRIND_FREELIKE_BLOCK(p, 0);
-		VALGRIND_MALLOCLIKE_BLOCK(p, n, 0, 1);
-	}
-#endif
-
-	return p;
 }

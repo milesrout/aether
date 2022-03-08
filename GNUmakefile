@@ -16,9 +16,9 @@ else
 	CFLAGS += -Og -g
 endif
 
-#ifneq ($(BUILD),release)
-#	CFLAGS += -Werror
-#endif
+ifneq ($(BUILD),release)
+	CFLAGS += -Werror
+endif
 
 CFLAGS    += -DBUILD_$(shell echo '$(BUILD)' | tr '[:lower:]' '[:upper:]')
 
