@@ -47,7 +47,7 @@ WARNINGS  += -Wduplicated-branches -Wduplicated-cond -Wtrampolines -Wfloat-equal
 WARNINGS  += -Wunsafe-loop-optimizations -Wbad-function-cast #-Wshadow
 WARNINGS  += -Wcast-qual -Wcast-align -Wwrite-strings #-Wconversion
 WARNINGS  += -Wpacked -Wdangling-else -Wno-parentheses #-Wsign-conversion
-WARNINGS  += -Wdate-time -Wjump-misses-init -Wreturn-local-addr
+WARNINGS  += -Wdate-time -Wjump-misses-init -Wreturn-local-addr -Wno-pointer-sign
 WARNINGS  += -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes
 WARNINGS  += -Wmissing-declarations -Wnormalized=nfkc -Wredundant-decls
 WARNINGS  += -Wnested-externs -Wno-missing-field-initializers -fanalyzer

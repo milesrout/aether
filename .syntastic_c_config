@@ -42,6 +42,7 @@
 -Wno-missing-field-initializers
 -Wno-overlength-strings
 -Wno-parentheses
+-Wno-pointer-sign
 -Wnormalized=nfkc
 -Wnull-dereference
 -Wold-style-definition
