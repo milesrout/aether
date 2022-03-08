@@ -21,13 +21,13 @@
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
-#include <sys/poll.h>
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>

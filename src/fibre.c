@@ -19,6 +19,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -27,7 +28,6 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
 
 #include "err.h"

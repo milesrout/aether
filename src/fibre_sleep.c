@@ -17,9 +17,9 @@
 #include <unistd.h>
 #include <err.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <sys/epoll.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <time.h>
