@@ -15,6 +15,7 @@
  */
 
 #include <unistd.h>
+#include <assert.h>
 #include <err.h>
 #include <fcntl.h>
 #include <stddef.h>
@@ -191,6 +192,31 @@ persist_load32_le(uint32_t *n, const uint8_t **pbuf, size_t *psize)
 }
 
 int
+persist_loadstr(uint8_t **pstr, uint32_t *plen, const uint8_t **pbuf, size_t *psize)
+{
+	uint32_t len;
+	int result;
+	char *str;
+
+	/* result is an unused variable in release mode (asserts disabled) */
+	(void)result;
+	if (persist_load32_le(&len, pbuf, psize)) return -1;
+	if (*psize < len) return -1;
+
+	str = malloc(len + 1);
+	if (!str) return -1;
+
+	result = persist_loadbytes(str, len, pbuf, psize);
+	assert(result == 0);
+	str[len] = '\0';
+
+	*pstr = str;
+	if (plen)
+		*plen = len;
+	return 0;
+}
+
+int
 persist_storebytes(const uint8_t *buf, size_t size, uint8_t **pbuf, size_t *psize)
 {
 	if (*psize < size)
@@ -215,5 +241,13 @@ persist_store32_le(const uint32_t *n, uint8_t **pbuf, size_t *psize)
 	*pbuf += 4;
 	*psize -= 4;
 
+	return 0;
+}
+
+int
+persist_storestr(const uint8_t *buf, uint32_t size, uint8_t **pbuf, size_t *psize)
+{
+	if (persist_store32_le(&size, pbuf, psize)) return -1;
+	if (persist_storebytes(buf, size, pbuf, psize)) return -1;
 	return 0;
 }

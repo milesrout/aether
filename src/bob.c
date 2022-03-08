@@ -499,7 +499,7 @@ handle_packet(struct ident_state *ident, union packet_state *state,
 		errg(loop_continue, "handle_packet: Unspecified error");
 	loop_quit:
 		if (save_on_quit)
-			store_keys("keys.enc", "alice", strlen("alice"), ident, *p2ptable);
+			store_keys("alice.keys", "alice", strlen("alice"), ident, *p2ptable);
 		exit(EXIT_SUCCESS);
 	loop_continue:
 		crypto_wipe(buf, nread);

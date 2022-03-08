@@ -39,15 +39,13 @@
 #include "isks.h"
 #include "persist.h"
 
-static void print_ident(const struct ident_state *ident);
-static void print_p2ptable(const struct p2pstate *p2ptable);
-
 int
 prompt_line(char **buf, size_t *len, size_t *size, const char *prompt)
 {
 	ssize_t slen;
 
 	printf("%s: ", prompt);
+	fflush(stdout);
 	if ((slen = getline(buf, size, stdin)) == -1L)
 		return -1;
 
@@ -113,7 +111,7 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 	if (persist_load32_le(&p2p_count, &cur, &left)) goto fail;
 	for (i = 0u; i < p2p_count; i++) {
 		struct packetkey_bucket *bucket;
-		uint32_t namelen, skipcount;
+		uint32_t skipcount;
 		struct p2pstate p2pobj, *p2p;
 		uint8_t prerecv;
 		uint8_t *name;
@@ -199,12 +197,8 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 			}
 		}
 
-		if (persist_load32_le(&namelen, &cur, &left)) goto fail;
-		name = malloc(namelen + 1);
-
-		if (persist_loadbytes(name, namelen, &cur, &left)) goto fail;
-		name[namelen] = 0;
-		p2p->username = (const char *)name;
+		if (persist_loadstr(&name, NULL, &cur, &left)) goto fail;
+		p2p->username = name;
 	}
 
 	result = 0;
@@ -334,8 +328,7 @@ loop:	size += (size / 2);
 		}
 		store32_le(pskipcount, skipcount);
 
-		if (persist_store32_le(&namelen, &cur, &left)) goto fail;
-		if (persist_storebytes((const uint8_t *)p2ptable[i].username, namelen, &cur, &left)) goto fail;
+		if (persist_storestr(p2ptable[i].username, namelen, &cur, &left)) goto fail;
 	}
 
 	if (persist_write(filename, buf, size, password, password_len))
@@ -393,8 +386,8 @@ alice(int argc, char **argv)
 		crypto_from_eddsa_public(ident.ik, ident.isk);
 		crypto_from_eddsa_private(ident.ik_prv, ident.isk_prv);
 	} else {
-		if (load_keys(&ident, &p2ptable, "keys.enc", password, password_len))
-			errx(EXIT_FAILURE, "Could not load keys from file `%s'", "keys.enc");
+		if (load_keys(&ident, &p2ptable, "alice.keys", password, password_len))
+			errx(EXIT_FAILURE, "Could not load keys from file `%s'", "alice.keys");
 	}
 
 	/* set up networking */
