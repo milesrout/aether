@@ -241,13 +241,13 @@ loop:	size += (size / 2);
 	if (persist_storebytes(ident->ik,      32, &cur, &left)) goto fail;
 	if (persist_storebytes(ident->ik_prv,  32, &cur, &left)) goto fail;
 
-	if (persist_store32_le(&opk_count, &cur, &left)) goto fail;
+	if (persist_store32_le(opk_count, &cur, &left)) goto fail;
 	for (i = 0u; i < opk_count; i++) {
 		if (persist_storebytes(ident->opks[i].key.data, 32, &cur, &left)) goto fail;
 		if (persist_storebytes(ident->opks[i].prv,      32, &cur, &left)) goto fail;
 	}
 
-	if (persist_store32_le(&spk_count, &cur, &left)) goto fail;
+	if (persist_store32_le(spk_count, &cur, &left)) goto fail;
 	for (i = 0u; i < spk_count; i++) {
 		if (persist_storebytes(ident->spks[i].key.data, 32, &cur, &left)) goto fail;
 		if (persist_storebytes(ident->spks[i].prv,      32, &cur, &left)) goto fail;
@@ -255,14 +255,14 @@ loop:	size += (size / 2);
 	}
 
 	if (ident->username == NULL) {
-		if (persist_store32_le(&name_len, &cur, &left)) goto fail;
+		if (persist_store32_le(name_len, &cur, &left)) goto fail;
 	} else {
 		name_len = strlen(ident->username);
-		if (persist_store32_le(&name_len, &cur, &left)) goto fail;
+		if (persist_store32_le(name_len, &cur, &left)) goto fail;
 		if (persist_storebytes(ident->username, name_len, &cur, &left)) goto fail;
 	}
 
-	if (persist_store32_le(&p2p_count, &cur, &left)) goto fail;
+	if (persist_store32_le(p2p_count, &cur, &left)) goto fail;
 	for (i = 0u; i < p2p_count; i++) {
 		uint32_t namelen = strlen(p2ptable[i].username);
 		uint8_t prerecv = p2ptable[i].state.ra.rac.prerecv ? 1 : 0;
@@ -283,9 +283,9 @@ loop:	size += (size / 2);
 		if (persist_storebytes(p2ptable[i].state.ra.rac.nhks,     32, &cur, &left)) goto fail;
 		if (persist_storebytes(p2ptable[i].state.ra.rac.nhkr,     32, &cur, &left)) goto fail;
 		if (persist_storebytes(p2ptable[i].state.ra.rac.ad,       64, &cur, &left)) goto fail;
-		if (persist_store32_le(&p2ptable[i].state.ra.rac.ns,          &cur, &left)) goto fail;
-		if (persist_store32_le(&p2ptable[i].state.ra.rac.nr,          &cur, &left)) goto fail;
-		if (persist_store32_le(&p2ptable[i].state.ra.rac.pn,          &cur, &left)) goto fail;
+		if (persist_store32_le(p2ptable[i].state.ra.rac.ns,           &cur, &left)) goto fail;
+		if (persist_store32_le(p2ptable[i].state.ra.rac.nr,           &cur, &left)) goto fail;
+		if (persist_store32_le(p2ptable[i].state.ra.rac.pn,           &cur, &left)) goto fail;
 		if (prerecv) {
 			if (persist_storebytes(p2ptable[i].state.rap.hk,   32, &cur, &left)) goto fail;
 			if (persist_storebytes(p2ptable[i].state.rap.ika,  32, &cur, &left)) goto fail;
@@ -297,7 +297,7 @@ loop:	size += (size / 2);
 		/* initially set this to zero, then go back and correct it
 		 * later once we know the correct value */
 		pskipcount = cur;
-		if (persist_store32_le(&skipcount, &cur, &left)) goto fail;
+		if (persist_store32_le(skipcount, &cur, &left)) goto fail;
 
 		bucket = p2ptable[i].state.ra.rac.skipped;
 		while (bucket != NULL) {
@@ -311,14 +311,14 @@ loop:	size += (size / 2);
 			/* initially set this to zero, then go back and correct
 			 * it later once we know the correct value */
 			pbucketlen = cur;
-			if (persist_store32_le(&bucketlen,     &cur, &left)) goto fail;
+			if (persist_store32_le(bucketlen,     &cur, &left)) goto fail;
 
 			packetkey = bucket->first;
 			while (packetkey != NULL) {
 				bucketlen++;
 
-				if (persist_store32_le(&packetkey->msn,     &cur, &left)) goto fail;
-				if (persist_storebytes(packetkey->mk,   32, &cur, &left)) goto fail;
+				if (persist_store32_le(packetkey->msn,     &cur, &left)) goto fail;
+				if (persist_storebytes(packetkey->mk,  32, &cur, &left)) goto fail;
 
 				packetkey = packetkey->next;
 			}

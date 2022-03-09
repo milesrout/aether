@@ -178,6 +178,32 @@ persist_loadbytes(uint8_t *buf, size_t size, const uint8_t **pbuf, size_t *psize
 }
 
 int
+persist_load8(uint8_t *n, const uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 1)
+		return -1;
+
+	*n = *(*pbuf)++;
+	(*psize)--;
+
+	return 0;
+}
+
+int
+persist_load16_le(uint16_t *n, const uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 2)
+		return -1;
+
+	*n = load16_le(*pbuf);
+
+	*pbuf += 2;
+	*psize -= 2;
+
+	return 0;
+}
+
+int
 persist_load32_le(uint32_t *n, const uint8_t **pbuf, size_t *psize)
 {
 	if (*psize < 4)
@@ -187,6 +213,20 @@ persist_load32_le(uint32_t *n, const uint8_t **pbuf, size_t *psize)
 
 	*pbuf += 4;
 	*psize -= 4;
+
+	return 0;
+}
+
+int
+persist_load64_le(uint64_t *n, const uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 8)
+		return -1;
+
+	*n = load64_le(*pbuf);
+
+	*pbuf += 8;
+	*psize -= 8;
 
 	return 0;
 }
@@ -231,12 +271,38 @@ persist_storebytes(const uint8_t *buf, size_t size, uint8_t **pbuf, size_t *psiz
 }
 
 int
-persist_store32_le(const uint32_t *n, uint8_t **pbuf, size_t *psize)
+persist_store8(uint8_t n, uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 1)
+		return -1;
+
+	*(*pbuf)++ = n;
+	*psize -= 1;
+
+	return 0;
+}
+
+int
+persist_store16_le(uint16_t n, uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 2)
+		return -1;
+
+	store16_le(*pbuf, n);
+
+	*pbuf += 2;
+	*psize -= 2;
+
+	return 0;
+}
+
+int
+persist_store32_le(uint32_t n, uint8_t **pbuf, size_t *psize)
 {
 	if (*psize < 4)
 		return -1;
 
-	store32_le(*pbuf, *n);
+	store32_le(*pbuf, n);
 
 	*pbuf += 4;
 	*psize -= 4;
@@ -245,9 +311,37 @@ persist_store32_le(const uint32_t *n, uint8_t **pbuf, size_t *psize)
 }
 
 int
+persist_store64_le(uint64_t n, uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < 8)
+		return -1;
+
+	store64_le(*pbuf, n);
+
+	*pbuf += 8;
+	*psize -= 8;
+
+	return 0;
+}
+
+int
 persist_storestr(const uint8_t *buf, uint32_t size, uint8_t **pbuf, size_t *psize)
 {
-	if (persist_store32_le(&size, pbuf, psize)) return -1;
+	if (persist_store32_le(size, pbuf, psize)) return -1;
 	if (persist_storebytes(buf, size, pbuf, psize)) return -1;
+	return 0;
+}
+
+int
+persist_zeropad(size_t size, uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < size)
+		return -1;
+
+	memset(*pbuf, 0, size);
+
+	*pbuf += size;
+	*psize -= size;
+
 	return 0;
 }
