@@ -14,15 +14,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define PROTO_MSG ((uint8_t)3)
-#define MSG_NACK ((uint8_t)1)
-#define MSG_FORWARD_MSG ((uint8_t)2)
-#define MSG_FORWARD_ACK ((uint8_t)3)
-#define MSG_FETCH_MSG ((uint8_t)4)
-#define MSG_FETCH_REP ((uint8_t)5)
-#define MSG_IMMEDIATE ((uint8_t)6)
-#define MSG_GOODBYE_MSG ((uint8_t)8)
-#define MSG_GOODBYE_ACK ((uint8_t)9)
+#include "proto-messaging.h"
+
 struct msg_nack_msg {
 	struct msg msg;
 };

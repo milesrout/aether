@@ -18,8 +18,8 @@
 #include <stdint.h>
 
 #include "msg.h"
-#include "ident.h"
-#include "messaging.h"
+#include "proto-ident.h"
+#include "proto-messaging.h"
 
 const char *
 msg_proto(uint8_t proto)
