@@ -28,6 +28,7 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
+#include <sys/queue.h>
 #include <sys/socket.h>
 
 #include "err.h"
@@ -123,18 +124,15 @@ fibre_setup(struct fibre *fibre)
  * This is a node in an intrusive bidirectional linked list of struct fibres.
  */
 struct fibre_store_node {
-	struct fibre_store_node *fsn_prev, *fsn_next;
+	TAILQ_ENTRY(fibre_store_node) fsn_nodes;
 	struct fibre fsn_fibre;
 };
 
 /*
  * This is the control block for a linked list of struct fibres.
- * it has two valid states:
- *   fsl_start===NULL & fsl_end===NULL -> list is empty
- *   fsl_start=/=NULL & fsl_end=/=NULL -> list is non-empty
  */
 struct fibre_store_list {
-	struct fibre_store_node *fsl_start, *fsl_end;
+	TAILQ_HEAD(fsl_nodes, fibre_store_node) fsl_nodes;
 	int fsl_count;
 	int fsl_epfd;
 };
@@ -143,7 +141,7 @@ static
 void
 fibre_store_list_init(struct fibre_store_list *list)
 {
-	list->fsl_start = list->fsl_end = NULL;
+	TAILQ_INIT(&list->fsl_nodes);
 	list->fsl_count = 0;
 	list->fsl_epfd = -1;
 }
@@ -156,42 +154,7 @@ fibre_store_list_enqueue(struct fibre_store_list *list, struct fibre *fibre)
 	struct fibre_store_node *node =
 		container_of(struct fibre_store_node, fsn_fibre, fibre);
 
-	/* require that the fibre is not already in a list */
-	assert(node->fsn_next == NULL);
-	assert(node->fsn_prev == NULL);
-
-	if (list->fsl_start == NULL || list->fsl_end == NULL) {
-		assert(list->fsl_start == NULL);
-		assert(list->fsl_end == NULL);
-
-		list->fsl_start = node;
-		list->fsl_end = node;
-	} else if (list->fsl_start == list->fsl_end) {
-		assert(list->fsl_start->fsn_prev == NULL);
-		assert(list->fsl_end->fsn_next == NULL);
-		
-		list->fsl_start = node;
-		node->fsn_next = list->fsl_end;
-		list->fsl_end->fsn_prev = node;
-
-		assert(list->fsl_start != list->fsl_end);
-		assert(list->fsl_start != NULL);
-		assert(list->fsl_end != NULL);
-		assert(list->fsl_start->fsn_next == list->fsl_end);
-		assert(list->fsl_end->fsn_prev == list->fsl_start);
-		assert(list->fsl_start->fsn_prev == NULL);
-		assert(list->fsl_end->fsn_next == NULL);
-	} else {
-		assert(list->fsl_start != NULL);
-		assert(list->fsl_end != NULL);
-		assert(list->fsl_start->fsn_prev == NULL);
-		assert(list->fsl_end->fsn_next == NULL);
-
-		list->fsl_start->fsn_prev = node;
-		node->fsn_next = list->fsl_start;
-		list->fsl_start = node;
-	}
-
+	TAILQ_INSERT_HEAD(&list->fsl_nodes, node, fsn_nodes);
 	list->fsl_count++;
 }
 
@@ -202,41 +165,12 @@ try_fibre_store_list_dequeue(struct fibre_store_list *list)
 {
 	struct fibre_store_node *node;
 
-	if (list->fsl_start == NULL || list->fsl_end == NULL) {
-		assert(list->fsl_start == NULL);
-		assert(list->fsl_end == NULL);
-
+	if (TAILQ_EMPTY(&list->fsl_nodes))
 		return NULL;
-	}
 
-	/* require that the list is non-empty */
-	assert(list->fsl_start != NULL);
-	assert(list->fsl_end != NULL);
-
-	/* these should just generally be true of *every* list */
-	assert(list->fsl_start->fsn_prev == NULL);
-	assert(list->fsl_end->fsn_next == NULL);
-
-	node = list->fsl_end;
-	if (list->fsl_start == list->fsl_end) {
-		assert(node->fsn_prev == NULL);
-		assert(node->fsn_next == NULL);
-		list->fsl_start = list->fsl_end = NULL;
-		list->fsl_count--;
-		assert(list->fsl_count == 0);
-	} else {
-		if (node->fsn_prev == NULL) {
-			assert(list->fsl_end == list->fsl_start);
-			list->fsl_start = list->fsl_end = NULL;
-		} else {
-			assert(list->fsl_end != list->fsl_start);
-			node->fsn_prev->fsn_next = NULL;
-			list->fsl_end = node->fsn_prev;
-			node->fsn_prev = NULL;
-		}
-
-		list->fsl_count--;
-	}
+	node = TAILQ_LAST(&list->fsl_nodes, fsl_nodes);
+	TAILQ_REMOVE(&list->fsl_nodes, node, fsn_nodes);
+	list->fsl_count--;
 	return &node->fsn_fibre;
 }
 
@@ -251,7 +185,7 @@ try_fibre_store_list_dequeue(struct fibre_store_list *list)
  * never deallocated, but the struct fibres within them can be reused.
  */
 struct fibre_store_block {
-	struct fibre_store_block *fsb_next;
+	SLIST_ENTRY(fibre_store_block) fsb_blocks;
 	struct fibre_store_node fsb_nodes[FIBRE_STORE_NODES_PER_BLOCK];
 };
 
@@ -261,33 +195,27 @@ struct fibre_store_block {
  */
 struct fibre_store {
 	size_t fs_stack_size;
-	struct fibre_store_block *fs_blocks;
+	SLIST_HEAD(fs_blocks, fibre_store_block) fs_blocks;
+	/* struct fibre_store_block *fs_blocks; */
 	/* the last list is for FS_EMPTY fibres */
 	struct fibre_store_list fs_lists[FL_NUM_LISTS];
 	int fs_epfd;
 };
 
 static
-struct fibre_store_block *
-fibre_store_block_create(struct fibre_store *store)
+void
+fibre_store_block_create(struct fibre_store_list *list, struct fibre_store *store)
 {
 	struct fibre_store_block *block =
 		mmap_allocate(sizeof *block);
 	ptrdiff_t i;
 
-#define MAX (FIBRE_STORE_NODES_PER_BLOCK - 1)
-	/* set up the nodes in the block to form a bidirectional linked list */
-	for (i = 0; i <= MAX; i++) {
-		block->fsb_nodes[i].fsn_prev = (i == 0) ? NULL : &block->fsb_nodes[i - 1];
-		block->fsb_nodes[i].fsn_next = (i == MAX) ? NULL : &block->fsb_nodes[i + 1];
+	for (i = 0; i < FIBRE_STORE_NODES_PER_BLOCK; i++) {
+		TAILQ_INSERT_TAIL(&list->fsl_nodes, block->fsb_nodes + i, fsn_nodes);
 		fibre_setup(&block->fsb_nodes[i].fsn_fibre);
 	}
-#undef MAX
-	
-	block->fsb_next = store->fs_blocks;
-	store->fs_blocks = block;
 
-	return block;
+	SLIST_INSERT_HEAD(&store->fs_blocks, block, fsb_blocks);
 }
 
 /*
@@ -301,77 +229,26 @@ fibre_store_get_first_empty(struct fibre_store *store)
 	struct fibre_store_list *empties_list = &store->fs_lists[FL_EMPTY];
 	struct fibre_store_node *node;
 
-	if (empties_list->fsl_start == NULL || empties_list->fsl_end == NULL) {
-		struct fibre_store_block *block;
-
-		assert(empties_list->fsl_start == NULL);
-		assert(empties_list->fsl_end == NULL);
-
-		block = fibre_store_block_create(store);
-		empties_list->fsl_start = &block->fsb_nodes[0];
-		empties_list->fsl_end =
-			&block->fsb_nodes[FIBRE_STORE_NODES_PER_BLOCK - 1];
+	if (TAILQ_EMPTY(&empties_list->fsl_nodes)) {
+		fibre_store_block_create(empties_list, store);
 	}
 
-	/* assert that the list is non-empty */
-	assert(empties_list->fsl_start != NULL);
-	assert(empties_list->fsl_end != NULL);
-
-	/* these should just generally be true of *every* list */
-	assert(empties_list->fsl_start->fsn_prev == NULL);
-	assert(empties_list->fsl_end->fsn_next == NULL);
-
-	node = empties_list->fsl_start;
-
-	if (node->fsn_next == NULL) {
-		assert(empties_list->fsl_end == empties_list->fsl_start);
-		empties_list->fsl_start = empties_list->fsl_end = NULL;
-	} else {
-		assert(empties_list->fsl_end != empties_list->fsl_start);
-		node->fsn_next->fsn_prev = NULL;
-		empties_list->fsl_start = node->fsn_next;
-		node->fsn_next = NULL;
-	}
-
+	node = TAILQ_FIRST(&empties_list->fsl_nodes);
+	TAILQ_REMOVE(&empties_list->fsl_nodes, node, fsn_nodes);
 	return &node->fsn_fibre;
 }
 
+/*
+ * This transfers a node from the waiting list to the ready list
+ */
 static
 void
 transfer_node(struct fibre_store_node *node,
 		struct fibre_store_list *ready,
 		struct fibre_store_list *waiting)
 {
-	if (node->fsn_prev) {
-		node->fsn_prev->fsn_next = node->fsn_next;
-	}
-	if (node->fsn_next) {
-		node->fsn_next->fsn_prev = node->fsn_prev;
-	}
-	if (node == waiting->fsl_start) {
-		assert(node->fsn_prev == NULL);
-		waiting->fsl_start = node->fsn_next;
-	}
-	if (node == waiting->fsl_end) {
-		assert(node->fsn_next == NULL);
-		waiting->fsl_end = node->fsn_prev;
-	}
-	node->fsn_prev = NULL;
-	node->fsn_next = NULL;
-	if (ready->fsl_start == NULL || ready->fsl_end == NULL) {
-		assert(ready->fsl_start == NULL);
-		assert(ready->fsl_end == NULL);
-		ready->fsl_start = ready->fsl_end = node;
-		node->fsn_prev = node->fsn_next = NULL;
-	} else {
-		assert(ready->fsl_start != NULL);
-		assert(ready->fsl_end != NULL);
-
-		ready->fsl_end->fsn_next = node;
-		node->fsn_prev = ready->fsl_end;
-		ready->fsl_end = node;
-		node->fsn_next = NULL;
-	}
+	TAILQ_REMOVE(&waiting->fsl_nodes, node, fsn_nodes);
+	TAILQ_INSERT_TAIL(&ready->fsl_nodes, node, fsn_nodes);
 	waiting->fsl_count--;
 	ready->fsl_count++;
 	node->fsn_fibre.f_state = FS_READY;
@@ -504,7 +381,7 @@ fibre_init(size_t stack_size)
 #undef NODE_SIZE
 
 	global_fibre_store.fs_stack_size = stack_size;
-	global_fibre_store.fs_blocks = NULL;
+	SLIST_INIT(&global_fibre_store.fs_blocks);
 	global_fibre_store.fs_epfd = epoll_create1(O_CLOEXEC);
 
 	for (i = 0; i < FL_NUM_LISTS; i++)
@@ -541,22 +418,23 @@ void
 fibre_store_destroy(struct fibre_store *store)
 {
 	ptrdiff_t i;
+	struct fibre_store_block *block;
 
-	while (store->fs_blocks != NULL) {
-		struct fibre_store_block *next = store->fs_blocks->fsb_next;
+	while (!SLIST_EMPTY(&store->fs_blocks)) {
+		block = SLIST_FIRST(&store->fs_blocks);
+
 		for (i = 0; i < FIBRE_STORE_NODES_PER_BLOCK; i++) {
-			if (&store->fs_blocks->fsb_nodes[i].fsn_fibre == main_fibre)
+			if (&block->fsb_nodes[i].fsn_fibre == main_fibre)
 				continue;
-			if (store->fs_blocks->fsb_nodes[i].fsn_fibre.f_stack == NULL)
+			if (block->fsb_nodes[i].fsn_fibre.f_stack == NULL)
 				continue;
 			mmap_deallocate(
-				store->fs_blocks->fsb_nodes[i].fsn_fibre.f_stack,
+				block->fsb_nodes[i].fsn_fibre.f_stack,
 				store->fs_stack_size);
 		}
-		mmap_deallocate(
-			store->fs_blocks,
-			sizeof *store->fs_blocks);
-		store->fs_blocks = next;
+
+		SLIST_REMOVE_HEAD(&store->fs_blocks, fsb_blocks);
+		mmap_deallocate(block, sizeof *block);
 	}
 }
 
