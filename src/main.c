@@ -171,25 +171,27 @@ send_packet_to(struct peer *peer, int fd, uint8_t *buf, size_t size)
 {
 	uint8_t *text = PACKET_TEXT(buf);
 	const char *error;
-	const char *proto = msg_proto(text[0]);
-	const char *type = msg_type(text[0], text[1]);
+	uint8_t proto = text[0], type = text[1];
+	const char *protosz = msg_proto(proto);
+	const char *typesz = msg_type(proto, type);
 
 	packet_lock(&peer->state, buf, size);
 	error = safe_sendto(fd, buf, PACKET_BUF_SIZE(size),
 		sstosa(&peer->addr), peer->addr_len);
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
-	printf("-> %lu bytes %s:%s %s/%s\n", PACKET_BUF_SIZE(size),
-		peer->host, peer->service, proto, type);
+	printf("-> %zu\t%s:%s\t%d/%d\t%s/%s\n", PACKET_BUF_SIZE(size),
+		peer->host, peer->service, proto, type, protosz, typesz);
 
 	return error;
 }
 
 static
 const char *
-handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_register_msg *msg = (struct ident_register_msg *)text;
 	struct key isk;
@@ -224,15 +226,16 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 	stbds_hmput(ctx->table, isk, ui);
 
 reply:
-	size = ident_register_ack_init(PACKET_TEXT(buf), failure);
+	size = ident_register_ack_init(text, text_size, failure);
 	return send_packet_to(peer, fd, buf, size);
 }
 
 static
 const char *
-handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
 	struct key isk;
@@ -254,15 +257,16 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	memcpy(kv->value.spk_sig, msg->spk_sig, 64);
 
 reply:
-	size = ident_spksub_ack_init(PACKET_TEXT(buf), failure);
+	size = ident_spksub_ack_init(text, text_size, failure);
 	return send_packet_to(peer, fd, buf, size);
 }
 
 static
 const char *
-handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
 	struct key isk;
@@ -292,15 +296,16 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	}
 
 reply:
-	size = ident_opkssub_ack_init(PACKET_TEXT(buf), failure);
+	size = ident_opkssub_ack_init(text, text_size, failure);
 	return send_packet_to(peer, fd, buf, size);
 }
 
 static
 const char *
-handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
 	struct key k = {0};
@@ -319,15 +324,16 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	k = stbds_shget(ctx->namestable, msg->username);
 
 reply:
-	size = ident_lookup_rep_init(PACKET_TEXT(buf), k.data);
+	size = ident_lookup_rep_init(text, text_size, k.data);
 	return send_packet_to(peer, fd, buf, size);
 }
 
 static
 const char *
-handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
 	struct key isk;
@@ -345,16 +351,17 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t
 	value = &kv->value;
 
 reply:
-	size = ident_reverse_lookup_rep_init(PACKET_TEXT(buf),
+	size = ident_reverse_lookup_rep_init(text, text_size,
 		value->username);
 	return send_packet_to(peer, fd, buf, size);
 }
 
 static
 const char *
-handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
 	struct key isk;
@@ -377,30 +384,32 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 		crypto_wipe(opk.data, 32);
 
 reply:
-	size = ident_keyreq_rep_init(PACKET_TEXT(buf),
+	size = ident_keyreq_rep_init(text, text_size,
 		value->spk, value->spk_sig, opk.data);
 	return send_packet_to(peer, fd, buf, size);
 }
 
 static
 const char *
-handle_unknown(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_unknown(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size;
 
 	(void)ctx;
 	(void)nread;
 
-	size = msg_nack_init(text);
+	size = msg_nack_init(text, text_size);
 	return send_packet_to(peer, fd, buf, size);
 }
 
 static
 const char *
-handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	const char *error;
 	struct userkv *kv;
@@ -418,7 +427,7 @@ handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	kv->value.peer = NULL;
 
 reply:
-	size = msg_goodbye_ack_init(text, NULL);
+	size = msg_goodbye_ack_init(text, text_size, NULL);
 	error = send_packet_to(peer, fd, buf, size);
 	free(peer);
 	return error;
@@ -426,9 +435,10 @@ reply:
 
 static
 const char *
-handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	int msgcount = 0;
 	ptrdiff_t arrlen;
@@ -459,7 +469,7 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, si
 
 reply:
 	totalmsglength = msgcount == 0 ? 0 : smsg.size + 34;
-	size = msg_fetch_rep_init(text, msgcount, totalmsglength);
+	size = msg_fetch_rep_init(text, text_size, msgcount, totalmsglength);
 
 	{
 		struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)text;
@@ -477,9 +487,10 @@ reply:
 
 static
 const char *
-handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t nread)
+handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
 {
 	uint8_t *text = PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t size = PACKET_TEXT_SIZE(nread);
 	struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
 	struct msg_fetch_reply_msg *repmsg;
@@ -517,7 +528,7 @@ handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 		memmove(innermsg->text, msg->messages + 2, message_size);
 
 		totalmsglength = message_size + 34;
-		repsize = msg_fetch_rep_init(PACKET_TEXT(buf), 1, totalmsglength);
+		repsize = msg_fetch_rep_init(text, text_size, 1, totalmsglength);
 		repmsg->msg.type = MSG_IMMEDIATE;
 
 		store16_le(innermsg->len, message_size);
@@ -541,26 +552,27 @@ handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	stbds_arrpush(kv->value.letterbox, smsg);
 
 reply:
-	repsize = msg_forward_ack_init(PACKET_TEXT(buf), result);
+	repsize = msg_forward_ack_init(text, text_size, result);
 	return send_packet_to(peer, fd, buf, repsize);
 }
 
+#define BUFSZ (65536)
 static
 const char *
 handle_datagram(int fd, struct server_ctx *ctx)
 {
-	size_t nread;
-	uint8_t buf[65536] = {0};
+	size_t nread, bufsz = BUFSZ;
+	uint8_t buf[BUFSZ] = {0};
 	struct peer *peer;
 	struct peer_init pi = {0};
 	const char *error;
 
 	pi.addr_len = sizeof(pi.addr);
-	error = safe_recvfrom(&nread, fd, buf, 65536,
+	error = safe_recvfrom(&nread, fd, buf, bufsz,
 		sstosa(&pi.addr), &pi.addr_len);
 	if (error) return error;
 
-	printf("<- %zu bytes ", nread);
+	printf("<- %zu\t", nread);
 
 	peer = peer_getbyaddr(&ctx->peertable, sstosa(&pi.addr), pi.addr_len);
 	if (peer == NULL) {
@@ -572,7 +584,7 @@ handle_datagram(int fd, struct server_ctx *ctx)
 	if (peer_getnameinfo(peer))
 		printf("unknown host and port: ");
 	else
-		printf("%s:%s ", peer->host, peer->service);
+		printf("%s:%s\t", peer->host, peer->service);
 
 	/* This is either a HELLO message from a new peer or a message
 	 * from a peer that isn't new but has just changed addresses
@@ -615,7 +627,7 @@ handle_datagram(int fd, struct server_ctx *ctx)
 			struct userkv *kv;
 			struct key isk;
 
-			printf("HSHAKE/HELLO\n");
+			printf("\tHSHAKE/HELLO\n");
 			crypto_wipe(buf, PACKET_HELLO_SIZE);
 
 			packet_hshake_dreply(&peer->state, buf);
@@ -627,7 +639,7 @@ handle_datagram(int fd, struct server_ctx *ctx)
 				return error;
 
 			peer->status = PEER_ACTIVE;
-			printf("-> %lu bytes %s:%s HSHAKE/REPLY\n",
+			printf("-> %zu\t%s:%s\t\tHSHAKE/REPLY\n",
 				PACKET_REPLY_SIZE, peer->host, peer->service);
 			
 			print_table(ctx->table, 0);
@@ -655,34 +667,34 @@ handle_datagram(int fd, struct server_ctx *ctx)
 
 	if (size >= sizeof(struct msg)) {
 		struct msg *msg = (struct msg *)text;
-		printf("%s/%s\n", msg_proto(msg->proto),
-			msg_type(msg->proto, msg->type));
+		printf("%d/%d\t%s/%s\n", msg->proto, msg->type,
+			msg_proto(msg->proto), msg_type(msg->proto, msg->type));
 		switch (msg->proto) {
 		case PROTO_IDENT:
 			switch (msg->type) {
 			case IDENT_REGISTER_MSG:
-				return handle_register(ctx, peer, fd, buf, nread);
+				return handle_register(ctx, peer, fd, buf, bufsz, nread);
 			case IDENT_SPKSUB_MSG:
-				return handle_spksub(ctx, peer, fd, buf, nread);
+				return handle_spksub(ctx, peer, fd, buf, bufsz, nread);
 			case IDENT_OPKSSUB_MSG:
-				return handle_opkssub(ctx, peer, fd, buf, nread);
+				return handle_opkssub(ctx, peer, fd, buf, bufsz, nread);
 			case IDENT_LOOKUP_MSG:
-				return handle_lookup(ctx, peer, fd, buf, nread);
+				return handle_lookup(ctx, peer, fd, buf, bufsz, nread);
 			case IDENT_REVERSE_LOOKUP_MSG:
-				return handle_reverse_lookup(ctx, peer, fd, buf, nread);
+				return handle_reverse_lookup(ctx, peer, fd, buf, bufsz, nread);
 			case IDENT_KEYREQ_MSG:
-				return handle_keyreq(ctx, peer, fd, buf, nread);
+				return handle_keyreq(ctx, peer, fd, buf, bufsz, nread);
 			default:
 				goto error;
 			}
 		case PROTO_MSG:
 			switch (msg->type) {
 			case MSG_GOODBYE_MSG:
-				return handle_goodbye(ctx, peer, fd, buf, nread);
+				return handle_goodbye(ctx, peer, fd, buf, bufsz, nread);
 			case MSG_FETCH_MSG:
-				return handle_fetch(ctx, peer, fd, buf, nread);
+				return handle_fetch(ctx, peer, fd, buf, bufsz, nread);
 			case MSG_FORWARD_MSG: 
-				return handle_forward(ctx, peer, fd, buf, nread);
+				return handle_forward(ctx, peer, fd, buf, bufsz, nread);
 			default:
 				goto error;
 			}
@@ -693,7 +705,7 @@ handle_datagram(int fd, struct server_ctx *ctx)
 
 error:
 	printf("UNKNOWN\n");
-	return handle_unknown(ctx, peer, fd, buf, nread);
+	return handle_unknown(ctx, peer, fd, buf, bufsz, nread);
 }
 
 static

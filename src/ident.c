@@ -48,12 +48,14 @@ fill_opks(struct ident_state *state, ptrdiff_t max)
 #define MAX_OPKS 32
 
 size_t
-ident_opkssub_msg_init(struct ident_state *state, uint8_t *buf)
+ident_opkssub_msg_init(struct ident_state *state, uint8_t *text, size_t text_size)
 {
-	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)buf;
-	uint8_t *next_key = buf + sizeof *msg;
+	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
+	uint8_t *next_key = text + sizeof *msg;
 	int count = 0;
 	int i;
+
+	(void)text_size;
 
 	count = fill_opks(state, MAX_OPKS);
 
@@ -65,14 +67,16 @@ ident_opkssub_msg_init(struct ident_state *state, uint8_t *buf)
 		next_key += 32;
 	}
 	store16_le(msg->opk_count, count);
+	memset(text + IDENT_OPKSSUB_MSG_SIZE(count), 0, padme_enc(IDENT_OPKSSUB_MSG_SIZE(count)) - IDENT_OPKSSUB_MSG_SIZE(count));
 
 	return padme_enc(IDENT_OPKSSUB_MSG_SIZE(count));
 }
 
 size_t
-ident_opkssub_ack_init(uint8_t *buf, uint8_t result)
+ident_opkssub_ack_init(uint8_t *text, size_t text_size, uint8_t result)
 {
-	struct ident_opkssub_ack_msg *msg = (struct ident_opkssub_ack_msg *)buf;
+	struct ident_opkssub_ack_msg *msg = (struct ident_opkssub_ack_msg *)text;
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_OPKSSUB_ACK;
@@ -83,9 +87,10 @@ ident_opkssub_ack_init(uint8_t *buf, uint8_t result)
 }
 
 size_t
-ident_spksub_ack_init(uint8_t *buf, uint8_t result)
+ident_spksub_ack_init(uint8_t *text, size_t text_size, uint8_t result)
 {
-	struct ident_spksub_ack_msg *msg = (struct ident_spksub_ack_msg *)buf;
+	struct ident_spksub_ack_msg *msg = (struct ident_spksub_ack_msg *)text;
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_SPKSUB_ACK;
@@ -96,9 +101,10 @@ ident_spksub_ack_init(uint8_t *buf, uint8_t result)
 }
 
 size_t
-ident_register_ack_init(uint8_t *buf, uint8_t result)
+ident_register_ack_init(uint8_t *text, size_t text_size, uint8_t result)
 {
-	struct ident_register_ack_msg *msg = (struct ident_register_ack_msg *)buf;
+	struct ident_register_ack_msg *msg = (struct ident_register_ack_msg *)text;
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_REGISTER_ACK;
@@ -109,10 +115,11 @@ ident_register_ack_init(uint8_t *buf, uint8_t result)
 }
 
 size_t
-ident_register_msg_init(struct ident_state *state, uint8_t *buf, char const *username)
+ident_register_msg_init(struct ident_state *state, uint8_t *text, size_t text_size, char const *username)
 {
-	struct ident_register_msg *msg = (struct ident_register_msg *)buf;
+	struct ident_register_msg *msg = (struct ident_register_msg *)text;
 	uint8_t username_len = strlen(username);
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_REGISTER_MSG;
@@ -120,6 +127,7 @@ ident_register_msg_init(struct ident_state *state, uint8_t *buf, char const *use
 	msg->username_len = username_len;
 	memcpy(msg->username, username, username_len);
 	msg->username[username_len] = '\0';
+	memset(text + IDENT_REGISTER_MSG_SIZE(username_len), 0, padme_enc(IDENT_REGISTER_MSG_SIZE(username_len)) - IDENT_REGISTER_MSG_SIZE(username_len));
 
 	(void)state;
 
@@ -127,10 +135,11 @@ ident_register_msg_init(struct ident_state *state, uint8_t *buf, char const *use
 }
 
 size_t
-ident_spksub_msg_init(struct ident_state *state, uint8_t *buf)
+ident_spksub_msg_init(struct ident_state *state, uint8_t *text, size_t text_size)
 {
-	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)buf;
+	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
 	struct keypair kp;
+	(void)text_size;
 
 	generate_kex_keypair(kp.key.data, kp.prv);
 	/* memcpy(kp.key.data, iks, 32); */
@@ -144,15 +153,17 @@ ident_spksub_msg_init(struct ident_state *state, uint8_t *buf)
 	store16_le(msg->msg.len, IDENT_SPKSUB_MSG_SIZE);
 	memcpy(msg->spk,     kp.key.data, 32);
 	memcpy(msg->spk_sig, kp.sig,      64);
+	memset(text + IDENT_SPKSUB_MSG_SIZE, 0, padme_enc(IDENT_SPKSUB_MSG_SIZE) - IDENT_SPKSUB_MSG_SIZE);
 
 	return padme_enc(IDENT_SPKSUB_MSG_SIZE);
 }
 
 size_t
-ident_lookup_msg_init(uint8_t *buf, const char *username)
+ident_lookup_msg_init(uint8_t *text, size_t text_size, const char *username)
 {
-	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)buf;
+	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
 	uint8_t len = strlen(username);
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_LOOKUP_MSG;
@@ -165,9 +176,10 @@ ident_lookup_msg_init(uint8_t *buf, const char *username)
 }
 
 size_t
-ident_lookup_rep_init(uint8_t *buf, uint8_t isk[32])
+ident_lookup_rep_init(uint8_t *text, size_t text_size, uint8_t isk[32])
 {
-	struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)buf;
+	struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)text;
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_LOOKUP_REP;
@@ -178,23 +190,29 @@ ident_lookup_rep_init(uint8_t *buf, uint8_t isk[32])
 }
 
 size_t
-ident_reverse_lookup_msg_init(uint8_t *buf, uint8_t isk[32])
+ident_reverse_lookup_msg_init(uint8_t *text, size_t text_size, uint8_t isk[32])
 {
-	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)buf;
+	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
+	size_t msg_size = IDENT_REVERSE_LOOKUP_MSG_SIZE;
+	size_t padded_size = padme_enc(IDENT_REVERSE_LOOKUP_MSG_SIZE);
+	size_t padding = padded_size - msg_size;
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_REVERSE_LOOKUP_MSG;
 	store16_le(msg->msg.len, IDENT_REVERSE_LOOKUP_MSG_SIZE);
 	memcpy(msg->isk, isk, 32);
+	memset(text + msg_size, 0, padding);
 
 	return padme_enc(IDENT_REVERSE_LOOKUP_MSG_SIZE);
 }
 
 size_t
-ident_reverse_lookup_rep_init(uint8_t *buf, const char *username)
+ident_reverse_lookup_rep_init(uint8_t *text, size_t text_size, const char *username)
 {
-	struct ident_reverse_lookup_reply_msg *msg = (struct ident_reverse_lookup_reply_msg *)buf;
+	struct ident_reverse_lookup_reply_msg *msg = (struct ident_reverse_lookup_reply_msg *)text;
 	uint8_t len = strlen(username);
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_REVERSE_LOOKUP_REP;
@@ -207,9 +225,10 @@ ident_reverse_lookup_rep_init(uint8_t *buf, const char *username)
 }
 
 size_t
-ident_keyreq_msg_init(struct ident_state *state, uint8_t *buf, const uint8_t isk[32])
+ident_keyreq_msg_init(struct ident_state *state, uint8_t *text, size_t text_size, const uint8_t isk[32])
 {
-	struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)buf;
+	struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_KEYREQ_MSG;
@@ -222,9 +241,10 @@ ident_keyreq_msg_init(struct ident_state *state, uint8_t *buf, const uint8_t isk
 }
 
 size_t
-ident_keyreq_rep_init(uint8_t *buf, uint8_t spk[32], uint8_t spk_sig[64], uint8_t opk[32])
+ident_keyreq_rep_init(uint8_t *text, size_t text_size, uint8_t spk[32], uint8_t spk_sig[64], uint8_t opk[32])
 {
-	struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)buf;
+	struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)text;
+	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
 	msg->msg.type = IDENT_KEYREQ_REP;

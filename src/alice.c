@@ -361,6 +361,7 @@ alice(int argc, char **argv)
 	struct ident_state ident = {0};
 	const char *host, *port, *mode;
 	uint8_t buf[65536] = {0};
+	size_t bufsz = 65536;
 	char *username = NULL, *password = NULL;
 	size_t nread, size;
 	size_t username_len, username_size;
@@ -421,7 +422,7 @@ alice(int argc, char **argv)
 	if (prompt_line(&username, &username_len, &username_size, "Username"))
 		err(EXIT_FAILURE, "Could not read username");
 
-	if (register_identity(&ident, &state, fd, buf, username))
+	if (register_identity(&ident, &state, fd, buf, bufsz, username))
 		errx(EXIT_FAILURE, "Cannot register username %s", username);
 
 	if (store_keys("keys.enc", password, password_len, &ident, p2ptable))
@@ -429,13 +430,13 @@ alice(int argc, char **argv)
 
 	/* send LOOKUP */
 	bobstate.username = "bob";
-	size = ident_lookup_msg_init(PACKET_TEXT(buf), "bob");
+	size = ident_lookup_msg_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), "bob");
 	packet_lock(&state, buf, size);
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
 	/* recv LOOKUP reply */
-	error = safe_read(&nread, fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, bufsz);
 	if (error)
 		errx(EXIT_FAILURE, "%s", error);
 	if (nread < PACKET_BUF_SIZE(0))
@@ -458,13 +459,13 @@ alice(int argc, char **argv)
 	}
 
 	/* send KEYREQ */
-	size = ident_keyreq_msg_init(&ident, PACKET_TEXT(buf), p2pstate->key.data);
+	size = ident_keyreq_msg_init(&ident, PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), p2pstate->key.data);
 	packet_lock(&state, buf, size);
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
 	/* recv KEYREQ reply */
-	error = safe_read(&nread, fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, bufsz);
 	if (error)
 		errx(EXIT_FAILURE, "%s", error);
 	if (nread < PACKET_BUF_SIZE(0))

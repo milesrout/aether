@@ -26,6 +26,7 @@ struct packet {
 	struct packethdr hdr;
 	uint8_t text[];
 };
+#define PACKET_HDR_SIZE (sizeof(struct packet))
 #define PACKET_BUF_SIZE(size) ((size) + sizeof(struct packet))
 #define PACKET_TEXT_SIZE(size) ((size) - sizeof(struct packet))
 #define PACKET_TEXT(buf) ((buf) + offsetof(struct packet, text))
@@ -182,13 +183,7 @@ extern int packet_hshake_dcheck(union packet_state *state, uint8_t buf[PACKET_HE
 extern void packet_hshake_dreply(union packet_state *state, uint8_t buf[PACKET_REPLY_SIZE]);
 extern void packet_lock(union packet_state *state, uint8_t *buf, size_t text_size);
 extern int packet_unlock(union packet_state *state, uint8_t *buf, size_t buf_size);
-extern size_t send_ohello_message(union packet_state *state,
-	union packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
-	const uint8_t *text, size_t text_size);
-extern size_t send_omsg_message(union packet_state *state,
-	union packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
-	const uint8_t *text, size_t text_size);
 extern size_t send_message(union packet_state *state,
 	union packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
-	const uint8_t *text, size_t text_size);
+	size_t bufsz, const uint8_t *text, size_t text_size);
 extern size_t padme_enc(size_t l);

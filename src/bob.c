@@ -147,19 +147,16 @@ get_username(const char **username_storage, union packet_state *state, int fd, u
 	size_t size, nread;
 	const char *error;
 	int result = -1;
-	uint8_t *buf;
+	uint8_t buf[1024];
+	size_t bufsz = 1024;
 
-	buf = calloc(1, 65536);
-	if (buf == NULL)
-		return result;
-
-	size = ident_reverse_lookup_msg_init(PACKET_TEXT(buf), isk);
+	size = ident_reverse_lookup_msg_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), isk);
 	error = send_packet(state, fd, buf, size);
 	if (error)
 		errg(fail, "Failed to send packet: %s", error);
 
 	fibre_awaitfd(fd, EPOLLIN);
-	error = safe_read(&nread, fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, bufsz);
 	if (error)
 		errg(fail, "Failed to read from socket: %s", error);
 
@@ -202,13 +199,14 @@ extern int save_on_quit;
 static
 void
 handle_input(union packet_state *state, struct p2pstate **p2ptable,
-		int fd, uint8_t *buf, const char *username)
+		int fd, uint8_t *buf, size_t bufsz, const char *username)
 {
 	struct p2pstate *p2pstate;
 	uint8_t text[258] = {0};
 	uint16_t text_size;
 	const char *error;
 	size_t size;
+	ssize_t ssize;
 	int n;
 
 	n = fscanf(stdin, "%256[^\n]", text);
@@ -223,8 +221,11 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 
 	if (text[0] == '/') {
 		if (strcmp((const char *)text, "/quit") == 0) {
-			crypto_wipe(buf, 65536);
-			size = msg_goodbye_init(buf, NULL);
+			ssize = msg_goodbye_init(PACKET_TEXT(buf),
+				PACKET_TEXT_SIZE(bufsz), NULL);
+			if (ssize == -1)
+				errx(EXIT_FAILURE, "Failed to create GOODBYE");
+			size = (size_t)ssize;
 			error = send_packet(state, fd, buf, size);
 			if (error)
 				errx(EXIT_FAILURE, "Failed to send GOODBYE: %s", error);
@@ -241,7 +242,7 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 
 	fprintf(stderr, "\033[F\b<%s> %s\n", username, text);
 	size = send_message(state, &p2pstate->state,
-		p2pstate->key.data, buf, text, text_size);
+		p2pstate->key.data, buf, bufsz, text, text_size);
 	error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 	if (error)
@@ -445,14 +446,14 @@ store_keys(const char *filename, const char *password, size_t password_len,
 static
 void
 handle_packet(struct ident_state *ident, union packet_state *state,
-		struct p2pstate **p2ptable, int fd, uint8_t *buf)
+		struct p2pstate **p2ptable, int fd, uint8_t *buf, size_t bufsz)
 {
 	const char *error;
 	struct msg *msg;
 	size_t nread;
 	
 	for (;;) {
-		error = safe_read(&nread, fd, buf, 65536);
+		error = safe_read(&nread, fd, buf, bufsz);
 		if (error)
 			errg(loop_continue, "handle_packet: Could not read from socket: %s", error);
 		msg = (struct msg *)PACKET_TEXT(buf);
@@ -520,10 +521,10 @@ fetch_thread(int fd, void *arg)
 	struct timespec ts = {15};
 	uint64_t expirations;
 	uint8_t buf[1024];
+	size_t bufsz = 1024;
 	const char *error;
-	size_t size;
 	int timerfd;
-	ssize_t n;
+	ssize_t n, size;
 
 	timerfd = timerfd_open(ts);
 	if (timerfd == -1)
@@ -535,7 +536,9 @@ fetch_thread(int fd, void *arg)
 		if (n == -1)
 			warn("Could not read timer expirations");
 
-		size = msg_fetch_init(buf);
+		size = msg_fetch_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz));
+		if (size == -1)
+			err(EXIT_FAILURE, "Could not create FETCH message");
 		packet_lock(ctx->state, buf, size);
 		error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
 		crypto_wipe(buf, PACKET_BUF_SIZE(size));
@@ -550,11 +553,12 @@ input_thread(int fd, void *arg)
 {
 	struct client_ctx *ctx = (struct client_ctx *)arg;
 	uint8_t buf[65536];
+	size_t bufsz = 65536;
 
 	fcntl_nonblock(STDIN_FILENO);
 
 	for (;;) {
-		handle_input(ctx->state, ctx->p2ptable, fd, buf,
+		handle_input(ctx->state, ctx->p2ptable, fd, buf, bufsz,
 			ctx->ident->username);
 	}
 }
@@ -565,9 +569,10 @@ handler_thread(int fd, void *arg)
 {
 	struct client_ctx *ctx = (struct client_ctx *)arg;
 	uint8_t buf[65536] = {0};
+	size_t bufsz = 65536;
 
 	for (;;) {
-		handle_packet(ctx->ident, ctx->state, ctx->p2ptable, fd, buf);
+		handle_packet(ctx->ident, ctx->state, ctx->p2ptable, fd, buf, bufsz);
 	}
 }
 
@@ -595,25 +600,30 @@ interactive(struct ident_state *ident, union packet_state *state,
 
 int
 register_identity(struct ident_state *ident, union packet_state *state,
-		int fd, uint8_t buf[65536], const char *name)
+		int fd, uint8_t *buf, size_t bufsz, const char *name)
 {
+	struct pollfd pfds[1] = {{fd, POLLIN}};
+	unsigned regn_state = 0;
+	const char *error;
 	size_t size;
 	int pcount;
-	unsigned regn_state = 0;
-	struct pollfd pfds[1] = {{fd, POLLIN}};
 
 	ident->username = name;
 
 	while (regn_state < 3) {
 		if (regn_state == 0)
-			size = ident_register_msg_init(ident, PACKET_TEXT(buf), name);
+			size = ident_register_msg_init(ident, PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), name);
 		else if (regn_state == 1)
-			size = ident_spksub_msg_init(ident, PACKET_TEXT(buf));
+			size = ident_spksub_msg_init(ident, PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz));
 		else
-			size = ident_opkssub_msg_init(ident, PACKET_TEXT(buf));
+			size = ident_opkssub_msg_init(ident, PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz));
 
 		packet_lock(state, buf, size);
-		safe_write(fd, buf, PACKET_BUF_SIZE(size));
+		error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
+		if (error) {
+			fprintf(stderr, "register_identity: safe_write: %s\n", error); 
+			return -1;
+		}
 		crypto_wipe(buf, PACKET_BUF_SIZE(size));
 		fprintf(stderr, "sent %lu-byte (%lu-byte) %s message\n",
 			size, PACKET_BUF_SIZE(size),
@@ -642,7 +652,8 @@ bob(int argc, char **argv)
 	union packet_state state = {0};
 	struct ident_state ident = {0};
 	struct p2pstate *p2ptable = NULL;
-	uint8_t buf[65536] = {0};
+	uint8_t buf[65536];
+	size_t bufsz = 65536;
 	const char *error;
 	size_t nread;
 
@@ -679,7 +690,7 @@ bob(int argc, char **argv)
 		errx(EXIT_FAILURE, "REPLY message cannot be decrypted");
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
-	if (register_identity(&ident, &state, fd, buf, "bob"))
+	if (register_identity(&ident, &state, fd, buf, bufsz, "bob"))
 		errx(EXIT_FAILURE, "Cannot register username bob");
 
 	interactive(&ident, &state, &p2ptable, fd);

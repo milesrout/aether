@@ -2,3 +2,6 @@ aether
 build/
 tags
 *.keys
+massif.out.*
+callgrind.out.*
+cachegrind.out.*

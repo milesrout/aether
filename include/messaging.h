@@ -61,9 +61,9 @@ struct msg_fetch_content_msg {
 };
 #define MSG_FETCH_CONTENT_BASE_SIZE (sizeof(struct msg_fetch_content_msg))
 #define MSG_FETCH_CONTENT_SIZE(n) (MSG_FETCH_CONTENT_BASE_SIZE + (n))
-extern size_t msg_nack_init(uint8_t *buf);
-extern size_t msg_forward_ack_init(uint8_t *buf, uint8_t result);
-extern size_t msg_fetch_rep_init(uint8_t *buf, uint8_t message_count, size_t totalmsglength);
-extern size_t msg_fetch_init(uint8_t *buf);
-extern size_t msg_goodbye_ack_init(uint8_t *buf, const uint8_t cv[32]);
-extern size_t msg_goodbye_init(uint8_t *buf, const uint8_t cv[32]);
+extern ssize_t msg_nack_init(uint8_t *text, size_t size);
+extern ssize_t msg_forward_ack_init(uint8_t *text, size_t size, uint8_t result);
+extern ssize_t msg_fetch_rep_init(uint8_t *text, size_t size, uint8_t message_count, size_t totalmsglength);
+extern ssize_t msg_fetch_init(uint8_t *text, size_t size);
+extern ssize_t msg_goodbye_ack_init(uint8_t *text, size_t size, const uint8_t cv[32]);
+extern ssize_t msg_goodbye_init(uint8_t *text, size_t size, const uint8_t cv[32]);

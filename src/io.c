@@ -97,11 +97,11 @@ sstosa(struct sockaddr_storage *ss)
 }
 
 const char *
-safe_read(size_t *nread, int fd, uint8_t *buf, size_t max_size_p1)
+safe_read(size_t *nread, int fd, uint8_t *buf, size_t size)
 {
 	ssize_t n;
 
-	do n = fibre_read(fd, buf, max_size_p1);
+	do n = fibre_read(fd, buf, size);
 	while (n == -1 && errno == EINTR);
 
 	if (n == -1)
@@ -112,14 +112,14 @@ safe_read(size_t *nread, int fd, uint8_t *buf, size_t max_size_p1)
 }
 
 const char *
-safe_recvfrom(size_t *nread, int fd, uint8_t *buf, size_t max_size_p1,
+safe_recvfrom(size_t *nread, int fd, uint8_t *buf, size_t size,
 		struct sockaddr *peeraddr, socklen_t *peeraddr_len)
 {
 	ssize_t n;
 
 	do {
 		*peeraddr_len = sizeof(struct sockaddr_storage);
-		n = fibre_recvfrom(fd, buf, max_size_p1, 0,
+		n = fibre_recvfrom(fd, buf, size, 0,
 			peeraddr, peeraddr_len);
 	} while (n == -1 && errno == EINTR);
 	if (n == -1)

@@ -29,6 +29,7 @@
 #include "packet.h"
 #include "hkdf.h"
 #include "monocypher.h"
+#include "persist.h"
 
 #define MAX_SKIP 1000
 #define AD_SIZE  64
@@ -881,79 +882,94 @@ packet_hshake_ahello(union packet_state *state, uint8_t *buf, size_t msgsize)
 	packet_lock(state, msg->message, msgsize);
 }
 
+static
 size_t
 send_ohello_message(union packet_state *state, union packet_state *p2pstate,
-		uint8_t recipient_isk[32], uint8_t *buf,
-		const uint8_t *text, size_t text_size)
+		uint8_t recipient_isk[32], uint8_t *buf, size_t bufsz,
+		const uint8_t *content, size_t content_size)
 {
-	struct msg_forward_msg *msg = (void *)PACKET_TEXT(buf);
-	uint8_t *smsg = PACKET_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of encapsulated message */
-	uint8_t *cbuf = smsg + PACKET_P2PHELLO_SIZE(0); /* start of internal message */
-	uint8_t *ctext = PACKET_TEXT(cbuf);
-	uint16_t msglength;
+	uint8_t *text = PACKET_TEXT(buf);
+	uint8_t *ohellomsg = text + MSG_FORWARD_MSG_BASE_SIZE + 2;
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
+	size_t innermsg_size = 2 + content_size;
+	size_t ohellomsg_size = PACKET_P2PHELLO_SIZE(innermsg_size);
+	size_t padded_ohellomsg_size = padme_enc(ohellomsg_size);
+	size_t ohellomsg_padding = padded_ohellomsg_size - ohellomsg_size;
+	size_t padded_innermsg_size = padded_ohellomsg_size - PACKET_P2PHELLO_SIZE(0);
+	size_t ohellopacket_size = PACKET_BUF_SIZE(padded_ohellomsg_size);
+	size_t innerpacket_size = PACKET_BUF_SIZE(padded_innermsg_size);
+	size_t fwdmsg_size = MSG_FORWARD_MSG_SIZE(2 + ohellopacket_size);
+	size_t padded_fwdmsg_size = padme_enc(fwdmsg_size);
+	size_t fwdmsg_padding = padded_fwdmsg_size - fwdmsg_size;
 
-	/* actual peer-to-peer message */
-	if (text != NULL) {
-		memcpy(ctext + 2, text, text_size);
-	}
-	store16_le(ctext, text_size);
+	if (persist_store8(PROTO_MSG,              &text, &text_size)) goto fail;
+	if (persist_store8(MSG_FORWARD_MSG,        &text, &text_size)) goto fail;
+	if (persist_store16_le(fwdmsg_size,        &text, &text_size)) goto fail;
+	if (persist_storebytes(recipient_isk, 32,  &text, &text_size)) goto fail;
+	if (persist_store8(1/*msg count*/,         &text, &text_size)) goto fail;
+	if (persist_store16_le(ohellopacket_size,  &text, &text_size)) goto fail;
+	if (persist_zeropad(40/*room for ohello*/, &text, &text_size)) goto fail;
+	if (persist_store8(0/*ohello.msgtype*/,    &text, &text_size)) goto fail;
+	if (persist_zeropad(96/*room for keys */,  &text, &text_size)) goto fail;
+	if (persist_store16_le(innerpacket_size,   &text, &text_size)) goto fail;
 
-	msglength = padme_enc(PACKET_P2PHELLO_SIZE(2 + text_size)) - PACKET_P2PHELLO_SIZE(0);
-	store16_le(cbuf - 2, PACKET_BUF_SIZE(msglength));
-	packet_hshake_ahello(p2pstate, smsg, msglength);
+	if (persist_zeropad(PACKET_HDR_SIZE,          &text, &text_size)) goto fail;
+	if (persist_store16_le(content_size,          &text, &text_size)) goto fail;
+	if (persist_storebytes(content, content_size, &text, &text_size)) goto fail;
+	if (persist_zeropad(ohellomsg_padding,        &text, &text_size)) goto fail;
+	packet_hshake_ahello(p2pstate, ohellomsg, padded_innermsg_size);
 
-	/* message-forwarding message to server */
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_FORWARD_MSG;
-	memcpy(msg->isk, recipient_isk, 32);
-	msg->message_count = 1;
-	store16_le(msg->messages, PACKET_P2PHELLO_SIZE(PACKET_BUF_SIZE(msglength)));
+	if (persist_zeropad(fwdmsg_padding, &text, &text_size)) goto fail;
+	packet_lock(state, buf, padded_fwdmsg_size);
 
-	{
-		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + PACKET_P2PHELLO_SIZE(PACKET_BUF_SIZE(msglength))));
-		packet_lock(state, buf, msgsize);
-		return msgsize;
-	}
+	return padded_fwdmsg_size;
+fail:
+	return -1;
 }
 
+static
 size_t
 send_omsg_message(union packet_state *state, union packet_state *p2pstate,
-		uint8_t recipient_isk[32], uint8_t *buf,
-		const uint8_t *text, size_t text_size)
+		uint8_t recipient_isk[32], uint8_t *buf, size_t bufsz,
+		const uint8_t *content, size_t content_size)
 {
-	struct msg_forward_msg *msg = (void *)PACKET_TEXT(buf);
-	uint8_t *cbuf = PACKET_TEXT(buf) + MSG_FORWARD_MSG_BASE_SIZE + 2; /* start of internal message */
-	uint8_t *ctext = PACKET_TEXT(cbuf);
-	uint16_t msglength;
+	uint8_t *text = PACKET_TEXT(buf);
+	uint8_t *omsg = text + MSG_FORWARD_MSG_BASE_SIZE + 2;
+	size_t text_size = PACKET_TEXT_SIZE(bufsz);
+	size_t innermsg_size = 2 + content_size;
+	size_t padded_innermsg_size = padme_enc(innermsg_size);
+	size_t innermsg_padding = padded_innermsg_size - innermsg_size;
+	size_t innerpacket_size = PACKET_BUF_SIZE(padded_innermsg_size);
+	size_t fwdmsg_size = MSG_FORWARD_MSG_SIZE(2 + innerpacket_size);
+	size_t padded_fwdmsg_size = padme_enc(fwdmsg_size);
+	size_t fwdmsg_padding = padded_fwdmsg_size - fwdmsg_size;
 
-	/* actual peer-to-peer message */
-	if (text != NULL) {
-		memcpy(ctext + 2, text, text_size);
-	}
-	store16_le(ctext, text_size);
-	msglength = padme_enc(text_size + 2);
-	packet_lock(p2pstate, cbuf, msglength);
+	if (persist_store8(PROTO_MSG,             &text, &text_size)) goto fail;
+	if (persist_store8(MSG_FORWARD_MSG,       &text, &text_size)) goto fail;
+	if (persist_store16_le(fwdmsg_size,       &text, &text_size)) goto fail;
+	if (persist_storebytes(recipient_isk, 32, &text, &text_size)) goto fail;
+	if (persist_store8(1/*msg count*/,        &text, &text_size)) goto fail;
+	if (persist_store16_le(innerpacket_size,  &text, &text_size)) goto fail;
 
-	/* message-forwarding message to server */
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_FORWARD_MSG;
-	store16_le(msg->msg.len, MSG_FORWARD_MSG_SIZE(2 + PACKET_BUF_SIZE(msglength)));
-	memcpy(msg->isk, recipient_isk, 32);
-	msg->message_count = 1;
-	store16_le(msg->messages, PACKET_BUF_SIZE(msglength));
+	if (persist_zeropad(PACKET_HDR_SIZE,          &text, &text_size)) goto fail;
+	if (persist_store16_le(content_size,          &text, &text_size)) goto fail;
+	if (persist_storebytes(content, content_size, &text, &text_size)) goto fail;
+	if (persist_zeropad(innermsg_padding,         &text, &text_size)) goto fail;
+	packet_lock(p2pstate, omsg, padded_innermsg_size);
 
-	{
-		uint16_t msgsize = padme_enc(MSG_FORWARD_MSG_SIZE(2 + PACKET_BUF_SIZE(msglength)));
-		packet_lock(state, buf, msgsize);
-		return msgsize;
-	}
+	if (persist_zeropad(fwdmsg_padding, &text, &text_size)) goto fail;
+	packet_lock(state, buf, padded_fwdmsg_size);
+
+	return padded_fwdmsg_size;
+fail:
+	return -1;
 }
 
 size_t
 send_message(union packet_state *state, union packet_state *p2pstate,
-		uint8_t recipient_isk[32], uint8_t *buf,
+		uint8_t recipient_isk[32], uint8_t *buf, size_t bufsz,
 		const uint8_t *text, size_t text_size)
 {
 	return (p2pstate->ra.rac.prerecv ? send_ohello_message : send_omsg_message)
-		(state, p2pstate, recipient_isk, buf, text, text_size);
+		(state, p2pstate, recipient_isk, buf, bufsz, text, text_size);
 }

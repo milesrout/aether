@@ -20,90 +20,139 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 #include "msg.h"
 #include "messaging.h"
 #include "packet.h"
+#include "persist.h"
 #include "util.h"
 
-size_t
-msg_nack_init(uint8_t *buf)
+ssize_t
+msg_nack_init(uint8_t *text, size_t size)
 {
-	struct msg_nack_msg *msg = (struct msg_nack_msg *)PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(size);
+	size_t padded_size, padding;
 
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_NACK;
-	store16_le(msg->msg.len, MSG_NACK_SIZE);
+	padded_size = padme_enc(MSG_NACK_SIZE);
+	padding = padded_size - MSG_NACK_SIZE;
 
-	return padme_enc(MSG_NACK_SIZE);
+	if (persist_store8(PROTO_MSG,         &text, &text_size)) goto fail;
+	if (persist_store8(MSG_NACK,          &text, &text_size)) goto fail;
+	if (persist_store16_le(MSG_NACK_SIZE, &text, &text_size)) goto fail;
+	if (persist_zeropad(padding,          &text, &text_size)) goto fail;
+
+	return padded_size;
+fail:
+	return -1;
 }
 
-size_t
-msg_fetch_init(uint8_t *buf)
+ssize_t
+msg_fetch_init(uint8_t *text, size_t size)
 {
-	struct msg_fetch_msg *msg = (struct msg_fetch_msg *)PACKET_TEXT(buf);
+	size_t text_size = PACKET_TEXT_SIZE(size);
+	size_t padded_size, padding;
 
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_FETCH_MSG;
-	store16_le(msg->msg.len, MSG_FETCH_MSG_SIZE);
+	padded_size = padme_enc(MSG_FETCH_MSG_SIZE);
+	padding = padded_size - MSG_FETCH_MSG_SIZE;
 
-	return padme_enc(MSG_FETCH_MSG_SIZE);
+	if (persist_store8(PROTO_MSG,              &text, &text_size)) goto fail;
+	if (persist_store8(MSG_FETCH_MSG,          &text, &text_size)) goto fail;
+	if (persist_store16_le(MSG_FETCH_MSG_SIZE, &text, &text_size)) goto fail;
+	if (persist_zeropad(padding,               &text, &text_size)) goto fail;
+
+	return padded_size;
+fail:
+	return -1;
 }
 
-size_t
-msg_forward_ack_init(uint8_t *buf, uint8_t result)
+ssize_t
+msg_forward_ack_init(uint8_t *text, size_t size, uint8_t result)
 {
-	struct msg_forward_ack_msg *msg = (struct msg_forward_ack_msg *)buf;
+	size_t text_size = PACKET_TEXT_SIZE(size);
+	size_t padded_size, padding;
 
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_FORWARD_ACK;
-	store16_le(msg->msg.len, MSG_FORWARD_ACK_SIZE);
-	msg->result = result;
+	padded_size = padme_enc(MSG_FORWARD_ACK_SIZE);
+	padding = padded_size - MSG_FORWARD_ACK_SIZE;
 
-	return padme_enc(MSG_FORWARD_ACK_SIZE);
+	if (persist_store8(PROTO_MSG,       &text, &text_size)) goto fail;
+	if (persist_store8(MSG_FORWARD_ACK, &text, &text_size)) goto fail;
+	if (persist_store16_le(MSG_FORWARD_ACK_SIZE, &text, &text_size)) goto fail;
+	if (persist_store8(result,          &text, &text_size)) goto fail;
+	if (persist_zeropad(padding,        &text, &text_size)) goto fail;
+
+	return padded_size;
+fail:
+	return -1;
 }
 
-size_t
-msg_fetch_rep_init(uint8_t *buf, uint8_t msgcount, size_t totalmsglength)
+ssize_t
+msg_fetch_rep_init(uint8_t *text, size_t size, uint8_t msgcount, size_t totalmsglength)
 {
-	struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)buf;
+	size_t msg_size = MSG_FETCH_REP_SIZE(totalmsglength);
+	size_t text_size = PACKET_TEXT_SIZE(size);
+	size_t padded_size, padding;
 
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_FETCH_REP;
-	store16_le(msg->msg.len, MSG_FETCH_REP_SIZE(totalmsglength));
-	msg->message_count = msgcount;
+	padded_size = padme_enc(msg_size);
+	padding = padded_size - msg_size;
 
-	return padme_enc(MSG_FETCH_REP_SIZE(totalmsglength));
+	if (persist_store8(PROTO_MSG,     &text, &text_size)) goto fail;
+	if (persist_store8(MSG_FETCH_REP, &text, &text_size)) goto fail;
+	if (persist_store16_le(msg_size,  &text, &text_size)) goto fail;
+	if (persist_store8(msgcount,      &text, &text_size)) goto fail;
+	if (persist_zeropad(padding,      &text, &text_size)) goto fail;
+
+	return padded_size;
+fail:
+	return -1;
 }
 
-size_t
-msg_goodbye_init(uint8_t *buf, const uint8_t cv[32])
+ssize_t
+msg_goodbye_init(uint8_t *text, size_t size, const uint8_t cv[32])
 {
-	struct msg_goodbye_msg *msg = (struct msg_goodbye_msg *)PACKET_TEXT(buf);
+	size_t msg_size = MSG_GOODBYE_MSG_SIZE;
+	size_t text_size = PACKET_TEXT_SIZE(size);
+	size_t padded_size, padding;
 
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_GOODBYE_MSG;
-	store16_le(msg->msg.len, MSG_GOODBYE_MSG_SIZE);
-	if (cv == NULL)
-		memset(msg->cv, 0, 32);
-	else
-		memcpy(msg->cv, cv, 32);
+	padded_size = padme_enc(msg_size);
+	padding = padded_size - msg_size;
 
-	return padme_enc(MSG_GOODBYE_MSG_SIZE);
+	if (persist_store8(PROTO_MSG,       &text, &text_size)) goto fail;
+	if (persist_store8(MSG_GOODBYE_MSG, &text, &text_size)) goto fail;
+	if (persist_store16_le(msg_size,    &text, &text_size)) goto fail;
+	if (cv == NULL) {
+		if (persist_zeropad(padding + 32, &text, &text_size)) goto fail;
+	} else {
+		if (persist_storebytes(cv, 32,    &text, &text_size)) goto fail;
+		if (persist_zeropad(padding,      &text, &text_size)) goto fail;
+	}
+
+	return padded_size;
+fail:
+	return -1;
 }
 
-size_t
-msg_goodbye_ack_init(uint8_t *buf, const uint8_t cv[32])
+ssize_t
+msg_goodbye_ack_init(uint8_t *text, size_t size, const uint8_t cv[32])
 {
-	struct msg_goodbye_ack_msg *msg = (struct msg_goodbye_ack_msg *)buf;
+	size_t msg_size = MSG_GOODBYE_ACK_SIZE;
+	size_t text_size = PACKET_TEXT_SIZE(size);
+	size_t padded_size, padding;
 
-	msg->msg.proto = PROTO_MSG;
-	msg->msg.type = MSG_GOODBYE_ACK;
-	store16_le(msg->msg.len, MSG_GOODBYE_ACK_SIZE);
-	if (cv == NULL)
-		memset(msg->cv, 0, 32);
-	else
-		memcpy(msg->cv, cv, 32);
+	padded_size = padme_enc(msg_size);
+	padding = padded_size - msg_size;
 
-	return padme_enc(MSG_GOODBYE_ACK_SIZE);
+	if (persist_store8(PROTO_MSG,       &text, &text_size)) goto fail;
+	if (persist_store8(MSG_GOODBYE_ACK, &text, &text_size)) goto fail;
+	if (persist_store16_le(msg_size,    &text, &text_size)) goto fail;
+	if (cv == NULL) {
+		if (persist_zeropad(padding + 32, &text, &text_size)) goto fail;
+	} else {
+		if (persist_storebytes(cv, 32,    &text, &text_size)) goto fail;
+		if (persist_zeropad(padding,      &text, &text_size)) goto fail;
+	}
+
+	return padded_size;
+fail:
+	return -1;
 }

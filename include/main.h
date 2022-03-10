@@ -25,6 +25,7 @@ extern int bob(int argc, char **argv);
 extern void interactive(struct ident_state *ident, union packet_state *state,
 	struct p2pstate **p2ptable, int fd);
 extern int register_identity(struct ident_state *ident,
-	union packet_state *state, int fd, uint8_t buf[65536], const char *name);
+	union packet_state *state, int fd, uint8_t *buf, size_t bufsz,
+	const char *name);
 extern int prompt_line(char **buf, size_t *len, size_t *size,
 	const char *prompt);
