@@ -425,8 +425,8 @@ alice(int argc, char **argv)
 	if (register_identity(&ident, &state, fd, buf, bufsz, username))
 		errx(EXIT_FAILURE, "Cannot register username %s", username);
 
-	if (store_keys("keys.enc", password, password_len, &ident, p2ptable))
-		errx(EXIT_FAILURE, "Could not store keys in file `%s'", "keys.enc");
+	if (store_keys("alice.keys", password, password_len, &ident, p2ptable))
+		errx(EXIT_FAILURE, "Could not store keys in file `%s'", "alice.keys");
 
 	/* send LOOKUP */
 	bobstate.username = "bob";
