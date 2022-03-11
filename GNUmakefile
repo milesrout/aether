@@ -4,6 +4,9 @@ else ifeq ($(BUILD),musl)
 	CFLAGS += -Os -s -D_FORTIFY_SOURCE=2 -DNDEBUG -march=native -static
 	LDFLAGS += -static
 	CC = musl-gcc
+else ifeq ($(BUILD),musldebug)
+	CFLAGS += -Og -g
+	CC = musl-gcc
 else ifeq ($(BUILD),valgrind)
 	CFLAGS += -Og -g
 else ifeq ($(BUILD),sanitise)
@@ -116,6 +119,10 @@ release:
 musl:
 	-$(MAKE) "BUILD=musl"
 	./build/musl/$(TARGET) $(args)
+
+musldebug:
+	-$(MAKE) "BUILD=musldebug"
+	./build/musldebug/$(TARGET) $(args)
 
 valgrind:
 	-$(MAKE) "BUILD=valgrind"
