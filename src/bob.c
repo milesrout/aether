@@ -37,6 +37,7 @@
 #include "err.h"
 #include "hkdf.h"
 #include "util.h"
+#include "queue.h"
 #include "packet.h"
 #include "peertable.h"
 #include "proof.h"

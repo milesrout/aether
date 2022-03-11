@@ -26,6 +26,7 @@
 #include "msg.h"
 #include "ident.h"
 #include "messaging.h"
+#include "queue.h"
 #include "packet.h"
 #include "hkdf.h"
 #include "monocypher.h"
@@ -78,8 +79,10 @@ static const uint8_t dh_info[]   = "AetherwindDiffieHellmanRatchet";
 static const uint8_t zero_nonce[24];
 static const uint8_t zero_key[32];
 
-static struct packetkey_bucket *spare_buckets = NULL;
-static struct packetkey *spare_packetkeys = NULL;
+static SLIST_HEAD(ssbh, packetkey_bucket) spare_buckets =
+	SLIST_HEAD_INITIALIZER(spare_buckets);
+static SLIST_HEAD(ssph, packetkey) spare_packetkeys =
+	SLIST_HEAD_INITIALIZER(spare_packetkeys);
 
 size_t
 padme_enc(size_t l)
@@ -209,7 +212,7 @@ try_skipped_message_keys(struct packet_ratchet_state_common *ra,
 	struct packetkey *prev_packetkey, *packetkey;
 
 	prev_bucket = NULL;
-	bucket = ra->skipped;
+	bucket = SLIST_FIRST(&ra->skipped);
 
 	while (bucket != NULL) {
 
@@ -218,7 +221,7 @@ try_skipped_message_keys(struct packet_ratchet_state_common *ra,
 		}
 
 		prev_packetkey = NULL;
-		packetkey = bucket->first;
+		packetkey = SLIST_FIRST(&bucket->bucket);
 
 		while (packetkey != NULL) {
 
@@ -238,42 +241,40 @@ try_skipped_message_keys(struct packet_ratchet_state_common *ra,
 			 */
 			
 			if (prev_packetkey != NULL) {
-				prev_packetkey->next = packetkey->next;
+				SLIST_REMOVE_AFTER(prev_packetkey, bucket);
 				goto detach_packetkey;
 			}
 
-			if (packetkey->next != NULL) {
-				bucket->first = packetkey->next;
+			if (SLIST_NEXT(packetkey, bucket) != NULL) {
+				SLIST_REMOVE_HEAD(&bucket->bucket, bucket);
 				goto detach_packetkey;
 			}
 
 			if (prev_bucket != NULL) {
-				prev_bucket->next = bucket->next;
+				SLIST_REMOVE_AFTER(prev_bucket, buckets);
 				goto detach_bucket;
 			}
 
-			if (bucket->next != NULL) {
-				ra->skipped = bucket->next;
+			if (SLIST_NEXT(bucket, buckets) != NULL) {
+				SLIST_REMOVE_HEAD(&ra->skipped, buckets);
 				goto detach_bucket;
 			}
 
 		detach_bucket:
 			crypto_wipe(bucket, sizeof(struct packetkey_bucket));
-			bucket->next = ra->spare_buckets;
-			ra->spare_buckets = bucket;
+			SLIST_INSERT_HEAD(&ra->spare_buckets, bucket, buckets);
 		detach_packetkey:
 			crypto_wipe(packetkey, sizeof(struct packetkey));
-			packetkey->next = ra->spare_packetkeys;
-			ra->spare_packetkeys = packetkey;
+			SLIST_INSERT_HEAD(&ra->spare_packetkeys, packetkey, bucket);
 			return 0;
 
 		inner_continue:
 			prev_packetkey = packetkey;
-			packetkey = packetkey->next;
+			packetkey = SLIST_NEXT(packetkey, bucket);
 		}
 	outer_continue:
 		prev_bucket = bucket;
-		bucket = bucket->next;
+		bucket = SLIST_NEXT(bucket, buckets);
 	}
 
 	return -1;
@@ -285,13 +286,15 @@ bucket_create(struct packet_ratchet_state_common *ra)
 {
 	struct packetkey_bucket *b;
 
-	if (NULL != (b = ra->spare_buckets)) {
-		ra->spare_buckets = b->next;
+	if (!SLIST_EMPTY(&ra->spare_buckets)) {
+		b = SLIST_FIRST(&ra->spare_buckets);
+		SLIST_REMOVE_HEAD(&ra->spare_buckets, buckets);
 		return b;
 	}
 
-	if (NULL != (b = spare_buckets)) {
-		spare_buckets = b->next;
+	if (!SLIST_EMPTY(&spare_buckets)) {
+		b = SLIST_FIRST(&spare_buckets);
+		SLIST_REMOVE_HEAD(&spare_buckets, buckets);
 		return b;
 	}
 
@@ -304,13 +307,15 @@ packetkey_create(struct packet_ratchet_state_common *ra)
 {
 	struct packetkey *m;
 
-	if (NULL != (m = ra->spare_packetkeys)) {
-		ra->spare_packetkeys = m->next;
+	if (!SLIST_EMPTY(&ra->spare_packetkeys)) {
+		m = SLIST_FIRST(&ra->spare_packetkeys);
+		SLIST_REMOVE_HEAD(&ra->spare_packetkeys, bucket);
 		return m;
 	}
 
-	if (NULL != (m = spare_packetkeys)) {
-		spare_packetkeys = m->next;
+	if (!SLIST_EMPTY(&spare_packetkeys)) {
+		m = SLIST_FIRST(&spare_packetkeys);
+		SLIST_REMOVE_HEAD(&spare_packetkeys, bucket);
 		return m;
 	}
 
@@ -329,8 +334,7 @@ skip_message_keys_helper(struct packet_ratchet_state_common *ra, uint32_t until)
 		return -1;
 
 	memcpy(bucket->hk, ra->hkr, 32);
-	bucket->next = ra->skipped;
-	ra->skipped = bucket;
+	SLIST_INSERT_HEAD(&ra->skipped, bucket, buckets);
 
 	while (ra->nr < until) {
 		struct packetkey *packetkey = packetkey_create(ra);
@@ -339,14 +343,13 @@ skip_message_keys_helper(struct packet_ratchet_state_common *ra, uint32_t until)
 			return -1;
 
 		if (prev_packetkey == NULL)
-			bucket->first = packetkey;
+			SLIST_INSERT_HEAD(&bucket->bucket, packetkey, bucket);
 		else
-			prev_packetkey->next = packetkey;
+			SLIST_INSERT_AFTER(prev_packetkey, packetkey, bucket);
 		prev_packetkey = packetkey;
 
 		packetkey->msn = ra->nr;
 		symm_ratchet(packetkey->mk, ra->ckr);
-		packetkey->next = NULL;
 
 		ra->nr++;
 	}

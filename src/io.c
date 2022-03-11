@@ -31,6 +31,7 @@
 #include "fibre.h"
 #include "io.h"
 #include "util.h"
+#include "queue.h"
 #include "packet.h"
 
 int

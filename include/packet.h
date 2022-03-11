@@ -86,10 +86,10 @@ struct packet_ratchet_state_common {
 	uint32_t nr;             /* message sequence number (recv) */
 	uint32_t pn;             /* previous sending chain length */
 	int prerecv;             /* are we in a pre-receive state? */
-	struct packetkey_bucket *skipped; /* LL of buckets for missed keys */
-	struct packetkey_bucket *spare_buckets;  /* pools for these so we don't */
-	struct packetkey        *spare_packetkeys; /* need to constantly realloc  */
-};                                             /* them.  we DO need to wipe!  */
+	SLIST_HEAD(sbh, packetkey_bucket) spare_buckets;
+	SLIST_HEAD(sph, packetkey) spare_packetkeys;
+	SLIST_HEAD(bsh, packetkey_bucket) skipped;
+};
 struct packet_ratchet_state {
 	struct packet_ratchet_state_common rac;
 };
@@ -116,12 +116,12 @@ union packet_state {
 struct packetkey {
 	uint32_t msn;
 	uint8_t mk[32];
-	struct packetkey *next;
+	SLIST_ENTRY(packetkey) bucket;
 };
 struct packetkey_bucket {
 	uint8_t hk[32];
-	struct packetkey *first;
-	struct packetkey_bucket *next;
+	SLIST_HEAD(bh, packetkey) bucket;
+	SLIST_ENTRY(packetkey_bucket) buckets;
 };
 struct hshake_hello_msg {
 	uint8_t hidden[32];

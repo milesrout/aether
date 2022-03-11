@@ -29,6 +29,7 @@
 #include "stb_ds.h"
 
 #include "err.h"
+#include "queue.h"
 #include "packet.h"
 #include "msg.h"
 #include "ident.h"
@@ -148,14 +149,16 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 
 		if (persist_load32_le(&skipcount, &cur, &left)) goto fail;
 
-		p2p->state.ra.rac.spare_buckets = NULL;
-		p2p->state.ra.rac.spare_packetkeys = NULL;
+		SLIST_INIT(&p2p->state.ra.rac.spare_buckets);
+		SLIST_INIT(&p2p->state.ra.rac.spare_packetkeys);
+		SLIST_INIT(&p2p->state.ra.rac.skipped);
 
 		if (skipcount == 0) {
-			bucket = p2p->state.ra.rac.skipped = NULL;
+			bucket = NULL;
 		} else {
-			bucket = p2p->state.ra.rac.skipped = malloc(sizeof *bucket);
+			bucket = malloc(sizeof *bucket);
 			assert(bucket);
+			SLIST_INSERT_HEAD(&p2p->state.ra.rac.skipped, bucket, buckets);
 		}
 
 		for (j = 0u; j < skipcount; j++) {
@@ -167,33 +170,31 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 			if (persist_load32_le(&bucketlen,     &cur, &left)) goto fail;
 
 			if (bucketlen == 0) {
-				packetkey = bucket->first = NULL;
+				packetkey = NULL;
 			} else {
-				packetkey = bucket->first = malloc(sizeof *packetkey);
+				packetkey = malloc(sizeof *packetkey);
 				assert(packetkey);
+				SLIST_INSERT_HEAD(&bucket->bucket, packetkey, bucket);
 			}
 
 			for (k = 0u; k < bucketlen; k++) {
 
-				packetkey = malloc(sizeof *packetkey);
-				assert(packetkey);
-
 				if (persist_load32_le(&packetkey->msn,     &cur, &left)) goto fail;
 				if (persist_loadbytes(packetkey->mk,   32, &cur, &left)) goto fail;
 
-				if (k == bucketlen - 1) {
-					packetkey->next = NULL;
-				} else {
-					packetkey = packetkey->next = malloc(sizeof *packetkey);
-					assert(packetkey);
+				if (k != bucketlen - 1) {
+					struct packetkey *next_packetkey = malloc(sizeof *packetkey);
+					assert(next_packetkey);
+					SLIST_INSERT_AFTER(packetkey, next_packetkey, bucket);
+					packetkey = next_packetkey;
 				}
 			}
 
-			if (j == skipcount - 1) {
-				bucket->next = NULL;
-			} else {
-				bucket = bucket->next = malloc(sizeof *bucket);
-				assert(bucket);
+			if (j != skipcount - 1) {
+				struct packetkey_bucket *next_bucket = malloc(sizeof *bucket);
+				assert(next_bucket);
+				SLIST_INSERT_AFTER(bucket, next_bucket, buckets);
+				bucket = next_bucket;
 			}
 		}
 
@@ -299,7 +300,7 @@ loop:	size += (size / 2);
 		pskipcount = cur;
 		if (persist_store32_le(skipcount, &cur, &left)) goto fail;
 
-		bucket = p2ptable[i].state.ra.rac.skipped;
+		bucket = SLIST_FIRST(&p2ptable[i].state.ra.rac.skipped);
 		while (bucket != NULL) {
 			struct packetkey *packetkey;
 			uint8_t *pbucketlen;
@@ -313,18 +314,18 @@ loop:	size += (size / 2);
 			pbucketlen = cur;
 			if (persist_store32_le(bucketlen,     &cur, &left)) goto fail;
 
-			packetkey = bucket->first;
+			packetkey = SLIST_FIRST(&bucket->bucket);
 			while (packetkey != NULL) {
 				bucketlen++;
 
 				if (persist_store32_le(packetkey->msn,     &cur, &left)) goto fail;
 				if (persist_storebytes(packetkey->mk,  32, &cur, &left)) goto fail;
 
-				packetkey = packetkey->next;
+				packetkey = SLIST_NEXT(packetkey, bucket);
 			}
 			store32_le(pbucketlen, bucketlen);
 
-			bucket = bucket->next;
+			bucket = SLIST_NEXT(bucket, buckets);
 		}
 		store32_le(pskipcount, skipcount);
 

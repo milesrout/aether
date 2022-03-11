@@ -25,6 +25,7 @@
 #include "stb_ds.h"
 
 #include "util.h"
+#include "queue.h"
 #include "packet.h"
 #include "msg.h"
 #include "ident.h"

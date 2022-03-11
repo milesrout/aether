@@ -23,6 +23,7 @@
 #include <sys/types.h>
 
 #include "msg.h"
+#include "queue.h"
 #include "messaging.h"
 #include "packet.h"
 #include "persist.h"

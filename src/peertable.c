@@ -27,6 +27,7 @@
 
 #include "err.h"
 #include "util.h"
+#include "queue.h"
 #include "packet.h"
 #include "peertable.h"
 #include "monocypher.h"
