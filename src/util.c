@@ -249,5 +249,5 @@ errwrap(const char *pre, const char *post)
 const char *
 errnowrap(const char *pre)
 {
-	return errwrap(pre, strerror(errno));
+	return errfmt("%s: %m", pre);
 }
