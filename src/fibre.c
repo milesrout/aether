@@ -28,12 +28,12 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
-#include <sys/queue.h>
 #include <sys/socket.h>
 
 #include "err.h"
 #include "util.h"
 #include "fibre.h"
+#include "queue.h"
 
 #ifdef BUILD_VALGRIND
 #include <valgrind/valgrind.h>
