@@ -280,13 +280,12 @@ try_skipped_message_keys(struct packet_ratchet_state_common *ra,
 	return -1;
 }
 
-static
 struct packetkey_bucket *
 bucket_create(struct packet_ratchet_state_common *ra)
 {
 	struct packetkey_bucket *b;
 
-	if (!SLIST_EMPTY(&ra->spare_buckets)) {
+	if (ra && !SLIST_EMPTY(&ra->spare_buckets)) {
 		b = SLIST_FIRST(&ra->spare_buckets);
 		SLIST_REMOVE_HEAD(&ra->spare_buckets, buckets);
 		return b;
@@ -301,13 +300,12 @@ bucket_create(struct packet_ratchet_state_common *ra)
 	return malloc(sizeof *b);
 }
 
-static
 struct packetkey *
 packetkey_create(struct packet_ratchet_state_common *ra)
 {
 	struct packetkey *m;
 
-	if (!SLIST_EMPTY(&ra->spare_packetkeys)) {
+	if (ra && !SLIST_EMPTY(&ra->spare_packetkeys)) {
 		m = SLIST_FIRST(&ra->spare_packetkeys);
 		SLIST_REMOVE_HEAD(&ra->spare_packetkeys, bucket);
 		return m;

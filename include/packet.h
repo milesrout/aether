@@ -187,3 +187,5 @@ extern size_t send_message(union packet_state *state,
 	union packet_state *p2pstate, uint8_t recipient[32], uint8_t *buf,
 	size_t bufsz, const uint8_t *text, size_t text_size);
 extern size_t padme_enc(size_t l);
+extern struct packetkey_bucket * bucket_create(struct packet_ratchet_state_common *ra);
+extern struct packetkey * packetkey_create(struct packet_ratchet_state_common *ra);

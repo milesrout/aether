@@ -39,6 +39,7 @@
 #include "io.h"
 #include "isks.h"
 #include "persist.h"
+#include "lockedbuf.h"
 
 int
 prompt_line(char **buf, size_t *len, size_t *size, const char *prompt)
@@ -153,10 +154,8 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 		SLIST_INIT(&p2p->state.ra.rac.spare_packetkeys);
 		SLIST_INIT(&p2p->state.ra.rac.skipped);
 
-		if (skipcount == 0) {
-			bucket = NULL;
-		} else {
-			bucket = malloc(sizeof *bucket);
+		if (skipcount) {
+			bucket = bucket_create(NULL);
 			assert(bucket);
 			SLIST_INSERT_HEAD(&p2p->state.ra.rac.skipped, bucket, buckets);
 		}
@@ -169,10 +168,8 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 			if (persist_loadbytes(bucket->hk, 32, &cur, &left)) goto fail;
 			if (persist_load32_le(&bucketlen,     &cur, &left)) goto fail;
 
-			if (bucketlen == 0) {
-				packetkey = NULL;
-			} else {
-				packetkey = malloc(sizeof *packetkey);
+			if (bucketlen) {
+				packetkey = packetkey_create(NULL);
 				assert(packetkey);
 				SLIST_INSERT_HEAD(&bucket->bucket, packetkey, bucket);
 			}
@@ -359,7 +356,7 @@ alice(int argc, char **argv)
 	struct p2pstate *p2ptable = NULL;
 	struct p2pstate *p2pstate;
 	struct p2pstate bobstate = {0};
-	struct ident_state ident = {0};
+	struct ident_state *ident;
 	const char *host, *port, *mode;
 	uint8_t buf[65536] = {0};
 	size_t bufsz = 65536;
@@ -379,16 +376,18 @@ alice(int argc, char **argv)
 
 	save_on_quit = 1;
 
+	ident = lockedbuf(NULL, sizeof(struct ident_state));
+
 	/* load or generate keys */
 	if (prompt_line(&password, &password_len, &password_size, "Password"))
 		errx(EXIT_FAILURE, "Could not read password");
 
 	if (mode[0] == 'n') {
-		generate_sig_keypair(ident.isk, ident.isk_prv);
-		crypto_from_eddsa_public(ident.ik, ident.isk);
-		crypto_from_eddsa_private(ident.ik_prv, ident.isk_prv);
+		generate_sig_keypair(ident->isk, ident->isk_prv);
+		crypto_from_eddsa_public(ident->ik, ident->isk);
+		crypto_from_eddsa_private(ident->ik_prv, ident->isk_prv);
 	} else {
-		if (load_keys(&ident, &p2ptable, "alice.keys", password, password_len))
+		if (load_keys(ident, &p2ptable, "alice.keys", password, password_len))
 			errx(EXIT_FAILURE, "Could not load keys from file `%s'", "alice.keys");
 	}
 
@@ -399,8 +398,8 @@ alice(int argc, char **argv)
 
 	/* send HELLO message */
 	packet_hshake_cprepare(&state, isks, iks,
-		ident.isk, ident.isk_prv,
-		ident.ik, ident.ik_prv,
+		ident->isk, ident->isk_prv,
+		ident->ik, ident->ik_prv,
 		NULL);
 	packet_hshake_chello(&state, buf);
 	safe_write(fd, buf, PACKET_HELLO_SIZE);
@@ -423,10 +422,10 @@ alice(int argc, char **argv)
 	if (prompt_line(&username, &username_len, &username_size, "Username"))
 		err(EXIT_FAILURE, "Could not read username");
 
-	if (register_identity(&ident, &state, fd, buf, bufsz, username))
+	if (register_identity(ident, &state, fd, buf, bufsz, username))
 		errx(EXIT_FAILURE, "Cannot register username %s", username);
 
-	if (store_keys("alice.keys", password, password_len, &ident, p2ptable))
+	if (store_keys("alice.keys", password, password_len, ident, p2ptable))
 		errx(EXIT_FAILURE, "Could not store keys in file `%s'", "alice.keys");
 
 	/* send LOOKUP */
@@ -460,7 +459,7 @@ alice(int argc, char **argv)
 	}
 
 	/* send KEYREQ */
-	size = ident_keyreq_msg_init(&ident, PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), p2pstate->key.data);
+	size = ident_keyreq_msg_init(ident, PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), p2pstate->key.data);
 	packet_lock(&state, buf, size);
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
@@ -492,13 +491,13 @@ alice(int argc, char **argv)
 	}
 
 	/* Peer-to-peer HELLO */
-	if (packet_hshake_aprepare(&p2pstate->state, ident.ik, ident.ik_prv,
+	if (packet_hshake_aprepare(&p2pstate->state, ident->ik, ident->ik_prv,
 			p2pstate->key.data, ikb, spkb, spkb_sig, opkb))
 		err(EXIT_FAILURE, "Error preparing handshake");
 
 skip_new_stuff:
 	/* Send and receive messages */
-	interactive(&ident, &state, &p2ptable, fd);
+	interactive(ident, &state, &p2ptable, fd);
 
 	exit(EXIT_SUCCESS);
 }
