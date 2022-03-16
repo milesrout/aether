@@ -2,3 +2,4 @@ include/stb_ds.h linguist-vendored
 include/monocypher.h linguist-vendored
 src/monocypher.c linguist-vendored
 include/queue.h linguist-vendored
+include/optparse.h linguist-vendored

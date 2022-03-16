@@ -15,6 +15,7 @@
  */
 
 #include <unistd.h>
+#include <err.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stddef.h>

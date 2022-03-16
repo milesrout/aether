@@ -16,6 +16,7 @@
 
 #include <unistd.h>
 #include <assert.h>
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -659,7 +660,7 @@ bob(int argc, char **argv)
 	size_t nread;
 
 	if (argc < 2 || argc > 4)
-		usage();
+		usage(argv, 1);
 
 	host = argc < 3? "127.0.0.1" : argv[2];
 	port = argc < 4? "3443" : argv[3];

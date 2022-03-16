@@ -13,13 +13,12 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-
 struct p2pstate {
 	struct key key;
 	union packet_state state;
 	const char *username;
 };
-extern void usage(void);
+extern void usage(char **, int);
 extern int alice(int argc, char **argv);
 extern int bob(int argc, char **argv);
 extern void interactive(struct ident_state *ident, union packet_state *state,

@@ -13,7 +13,4 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-
-#include <err.h>
-extern char *__progname;
 #define errg(label, ...) do { warnx(__VA_ARGS__); goto label; } while (0)

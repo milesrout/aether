@@ -16,6 +16,7 @@
 
 #include <unistd.h>
 #include <assert.h>
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -34,6 +35,7 @@
 #include <sys/types.h>
 
 #include "monocypher.h"
+#include "optparse.h"
 #define STBDS_NO_SHORT_NAMES
 #include "stb_ds.h"
 
@@ -68,8 +70,6 @@
  * vs.
  * secret key: exclusively refers to _symmetric_ secret keys.
  */
-
-const char *progname;
 
 /* the following functions are "safe" in the sense that instead of returning an
  * error, they abort the program.  They are not safe in the sense that they
@@ -856,7 +856,7 @@ serve(int argc, char **argv)
 	int fd = -1, gai;
 
 	if (argc < 2 || argc > 4)
-		usage();
+		usage(argv, 1);
 
 	host = argc < 3? "127.0.0.1" : argv[2];
 	port = argc < 4? "3443" : argv[3];
@@ -925,7 +925,7 @@ proof(int argc, char **argv)
 	(void)argv;
 
 	if (argc != 2)
-		usage();
+		usage(argv, 1);
 
 	randbytes(challenge, 32);
 	randbytes(signing_key_prv, 32);
@@ -955,7 +955,7 @@ keygen(int argc, char **argv)
 	(void)argv;
 
 	if (argc != 2)
-		usage();
+		usage(argv, 1);
 
 	generate_kex_keypair(pub, prv);
 
@@ -1044,7 +1044,7 @@ persist(int argc, char **argv)
 	size_t password_bufsize = 0;
 
 	if (argc != 4)
-		usage();
+		usage(argv, 1);
 
 	command = argv[2];
 	filename = argv[3];
@@ -1072,44 +1072,59 @@ persist(int argc, char **argv)
 		if (persist_write(filename, buf, size, password, password_size))
 			errx(EXIT_FAILURE, "Could not store to `%s'", filename);
 	} else {
-		usage();
+		usage(argv, 1);
 	}
 
 	exit(EXIT_SUCCESS);
 }
 
 void
-usage(void)
+usage(char **argv, int ret)
 {
-	fprintf(stderr, "usage: %s (k[eygen] | p[roof] | d[aemon) HOST PORT)\n",
-		progname);
-	exit(EXIT_FAILURE);
+	fprintf(stderr, "usage: %s [-hABDFKPRV]\n",
+		argv[0]);
+	exit(ret);
+}
+
+static
+void
+version(char **argv)
+{
+	fprintf(stderr, "%s version master", argv[0]);
+	exit(0);
 }
 
 int
 main(int argc, char **argv)
 {
-	uint8_t seed[8];
 	const char *error = NULL;
-
-	progname = argv[0];
+	struct optparse options;
+	uint8_t seed[8];
+	int option;
 
 	if (argc < 2)
-		usage();
+		usage(argv, 1);
 
 	randbytes(seed, 8);
 	stbds_rand_seed(load64_le(seed));
 	fibre_init(STACK_SIZE);
 
-	switch (argv[1][0]) {
-		case 'a': alice(argc, argv); break;
-		case 'b': bob(argc, argv); break;
-		case 'd': error = serve(argc, argv); break;
-		case 'f': fibre(argc, argv); break;
-		case 'k': keygen(argc, argv); break;
-		case 'p': proof(argc, argv); break;
-		case 'P': persist(argc, argv); break;
-		default:  usage();
+	optparse_init(&options, argv);
+	options.permute = 0;
+
+	while ((option = optparse(&options, "ABDFKPRVh")) != -1) {
+		switch (option) {
+		case 'A': alice(argc, argv); break;
+		case 'B': bob(argc, argv); break;
+		case 'D': error = serve(argc, argv); break;
+		case 'F': fibre(argc, argv); break;
+		case 'K': keygen(argc, argv); break;
+		case 'P': proof(argc, argv); break;
+		case 'R': persist(argc, argv); break;
+		case 'V': version(argv); break;
+		case 'h': usage(argv, 0); break;
+		default:  usage(argv, 1);
+		}
 	}
 
 	if (error) {
@@ -1118,5 +1133,5 @@ main(int argc, char **argv)
 	}
 
 	/* the functions dispatched above should not return */
-	exit(EXIT_SUCCESS);
+	usage(argv, 1);
 }

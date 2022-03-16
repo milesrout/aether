@@ -84,6 +84,11 @@ build/$(BUILD)/src/stb_ds.c.o: src/stb_ds.c
 	@echo '  CC      ' $<.o
 	@$(CC) -c $(CFLAGSNW) $< -o $@
 
+build/$(BUILD)/src/optparse.c.o: src/optparse.c
+	@mkdir -p $(dir $@)
+	@echo '  CC      ' $<.o
+	@$(CC) -c $(CFLAGSNW) $< -o $@
+
 build/$(BUILD)/%.c.o: %.c
 	@mkdir -p $(dir $@)
 	@echo '  CC      ' $<.o

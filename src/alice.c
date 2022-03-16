@@ -15,6 +15,7 @@
  */
 
 #include <assert.h>
+#include <err.h>
 #include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -158,40 +159,40 @@ load_keys(struct ident_state *ident, struct p2pstate **p2ptable,
 			bucket = bucket_create(NULL);
 			assert(bucket);
 			SLIST_INSERT_HEAD(&p2p->state.ra.rac.skipped, bucket, buckets);
-		}
 
-		for (j = 0u; j < skipcount; j++) {
-			struct packetkey *packetkey;
-			uint32_t bucketlen;
-			unsigned k;
+			for (j = 0u; j < skipcount; j++) {
+				struct packetkey *packetkey;
+				uint32_t bucketlen;
+				unsigned k;
 
-			if (persist_loadbytes(bucket->hk, 32, &cur, &left)) goto fail;
-			if (persist_load32_le(&bucketlen,     &cur, &left)) goto fail;
+				if (persist_loadbytes(bucket->hk, 32, &cur, &left)) goto fail;
+				if (persist_load32_le(&bucketlen,     &cur, &left)) goto fail;
 
-			if (bucketlen) {
-				packetkey = packetkey_create(NULL);
-				assert(packetkey);
-				SLIST_INSERT_HEAD(&bucket->bucket, packetkey, bucket);
-			}
+				if (bucketlen) {
+					packetkey = packetkey_create(NULL);
+					assert(packetkey);
+					SLIST_INSERT_HEAD(&bucket->bucket, packetkey, bucket);
 
-			for (k = 0u; k < bucketlen; k++) {
+					for (k = 0u; k < bucketlen; k++) {
 
-				if (persist_load32_le(&packetkey->msn,     &cur, &left)) goto fail;
-				if (persist_loadbytes(packetkey->mk,   32, &cur, &left)) goto fail;
+						if (persist_load32_le(&packetkey->msn,     &cur, &left)) goto fail;
+						if (persist_loadbytes(packetkey->mk,   32, &cur, &left)) goto fail;
 
-				if (k != bucketlen - 1) {
-					struct packetkey *next_packetkey = malloc(sizeof *packetkey);
-					assert(next_packetkey);
-					SLIST_INSERT_AFTER(packetkey, next_packetkey, bucket);
-					packetkey = next_packetkey;
+						if (k != bucketlen - 1) {
+							struct packetkey *next_packetkey = packetkey_create(NULL);
+							assert(next_packetkey);
+							SLIST_INSERT_AFTER(packetkey, next_packetkey, bucket);
+							packetkey = next_packetkey;
+						}
+					}
 				}
-			}
 
-			if (j != skipcount - 1) {
-				struct packetkey_bucket *next_bucket = malloc(sizeof *bucket);
-				assert(next_bucket);
-				SLIST_INSERT_AFTER(bucket, next_bucket, buckets);
-				bucket = next_bucket;
+				if (j != skipcount - 1) {
+					struct packetkey_bucket *next_bucket = bucket_create(NULL);
+					assert(next_bucket);
+					SLIST_INSERT_AFTER(bucket, next_bucket, buckets);
+					bucket = next_bucket;
+				}
 			}
 		}
 
@@ -368,7 +369,7 @@ alice(int argc, char **argv)
 
 	/* argument handling */
 	if (argc < 2 || argc > 5)
-		usage();
+		usage(argv, 1);
 
 	mode = argc < 3? "new" : argv[2];
 	host = argc < 4? "127.0.0.1" : argv[3];
