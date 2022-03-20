@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -30,6 +31,7 @@
 #include "util.h"
 #include "queue.h"
 #include "packet.h"
+#include "msg.h"
 #include "peertable.h"
 #include "monocypher.h"
 
@@ -135,6 +137,12 @@ peer_add(struct peertable *pt, const struct peer_init *pi)
 	memset(peer->host, 0, NI_MAXHOST);
 	memset(peer->service, 0, NI_MAXSERV);
 	memset(&peer->state, 0, sizeof peer->state);
+	STAILQ_INIT(&peer->recvq);
+	peer->eventfd = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK);
+	if (peer->eventfd == -1) {
+		free(peer);
+		return NULL;
+	}
 	peer->hash = hash_peeraddr((const struct sockaddr *)&pi->addr, pi->addr_len);
 	idx = peer->hash % pt->cap;
 

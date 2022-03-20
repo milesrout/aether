@@ -79,14 +79,14 @@ fibre_sleep(const struct timespec *duration)
 
 	fd = timerfd_create(CLOCK_MONOTONIC, O_NONBLOCK);
 	if (fd == -1)
-		err(EXIT_FAILURE, "fibre_sleep: Could not create timerfd");
+		err(1, "fibre_sleep: Could not create timerfd");
 
 	timer.it_value.tv_sec = duration->tv_sec;
 	timer.it_value.tv_nsec = duration->tv_nsec;
 	timer.it_interval.tv_sec = 0;
 	timer.it_interval.tv_nsec = 0;
 	if (timerfd_settime(fd, 0, &timer, NULL))
-		err(EXIT_FAILURE, "fibre_sleep: Could not set timer on timerfd");
+		err(1, "fibre_sleep: Could not set timer on timerfd");
 
 	result = fibre_awaitfd(fd, EPOLLIN);
 

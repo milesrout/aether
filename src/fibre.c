@@ -104,9 +104,9 @@ struct fibre {
 	unsigned f_valgrind_id;
 	int f_id;
 	int f_fd;
-	int f_datan;
+	long f_datan;
 	char *f_stack;
-	void (*f_func)(int, void *);
+	void (*f_func)(long, void *);
 	void *f_datap;
 };
 
@@ -269,7 +269,7 @@ fibre_store_poll(struct fibre_store_list *ready,
 	do count = epoll_wait(waiting->fsl_epfd, ev, 8, 0);
 	while (count == -1 && errno == EINTR);
 	if (count == -1)
-		err(EXIT_FAILURE, "epoll_wait");
+		err(1, "epoll_wait");
 
 	for (i = 0; i < count; i++) {
 		f = &((struct fibre_store_node *)ev[i].data.ptr)->fsn_fibre;
@@ -283,13 +283,13 @@ fibre_store_poll(struct fibre_store_list *ready,
 					f->f_fd, opterrstring);
 			}
 			errno = sockerr;
-			err(EXIT_FAILURE, "epoll_wait -> EPOLLERR");
+			err(1, "epoll_wait -> EPOLLERR");
 		}
 
 		transfer_node(ev[i].data.ptr, ready, waiting);
 		ev[i].events = 0;
 		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD, f->f_fd, &ev[i]))
-			err(EXIT_FAILURE, "epoll_ctl(EPOLL_CTL_MOD)");
+			err(1, "epoll_ctl(EPOLL_CTL_MOD)");
 	}
 
 	return 0;
@@ -390,7 +390,7 @@ fibre_init(size_t stack_size)
 	for (i = 0; i < FP_NUM_PRIOS; i++) {
 		epfd = epoll_create1(O_CLOEXEC);
 		if (epfd == -1)
-			err(EXIT_FAILURE, "epoll_create1");
+			err(1, "epoll_create1");
 
 		ev.events = EPOLLIN;
 		ev.data.u32 = i;
@@ -398,7 +398,7 @@ fibre_init(size_t stack_size)
 		global_fibre_store.fs_lists[FL_HIGH_WAITING + i].fsl_epfd = epfd;
 
 		if (epoll_ctl(global_fibre_store.fs_epfd, EPOLL_CTL_ADD, epfd, &ev))
-			err(EXIT_FAILURE, "epoll_ctl(EPOLL_CTL_ADD)");
+			err(1, "epoll_ctl(EPOLL_CTL_ADD)");
 	}
 
 	main_fibre = fibre_store_get_first_empty(&global_fibre_store);
@@ -512,17 +512,17 @@ fibre_enqueue_waiting(struct fibre *fibre, int fd, int events)
 
 	if (fibre->f_fd == fd) {
 		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD, fibre->f_fd, &ev))
-			err(EXIT_FAILURE, "epoll_ctl(EPOLL_CTL_MOD)");
+			err(1, "epoll_ctl(EPOLL_CTL_MOD)");
 		return;
 	}
 
 	if (fibre->f_fd != -1)
 		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_DEL, fibre->f_fd, NULL))
-			err(EXIT_FAILURE, "epoll_ctl(EPOLL_CTL_DEL)");
+			err(1, "epoll_ctl(EPOLL_CTL_DEL)");
 
 	fibre->f_fd = fd;
 	if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_ADD, fibre->f_fd, &ev))
-		err(EXIT_FAILURE, "epoll_ctl(EPOLL_CTL_ADD)");
+		err(1, "epoll_ctl(EPOLL_CTL_ADD)");
 }
 
 ssize_t
@@ -705,7 +705,7 @@ fibre_call(void)
 }
 
 void
-fibre_go(int prio, void (*func)(int, void *), int datan, void *datap)
+fibre_go(int prio, void (*func)(long, void *), long datan, void *datap)
 {
 	char *stack;
 	size_t size = global_fibre_store.fs_stack_size;
@@ -748,7 +748,7 @@ static void *mmap_allocate(size_t m)
 		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 		/* MAP_GROWSDOWN|MAP_PRIVATE|MAP_ANONYMOUS, -1, 0); */
 	if (p == MAP_FAILED)
-		err(EXIT_FAILURE, "Failed to allocate (mmap)");
+		err(1, "Failed to allocate (mmap)");
 #ifdef BUILD_VALGRIND
 	VALGRIND_MALLOCLIKE_BLOCK(p, m, 0, 1);
 #endif
@@ -761,7 +761,7 @@ static void  mmap_deallocate(void *p, size_t n)
 
 	r = munmap(p, n);
 	if (r == -1)
-		err(EXIT_FAILURE, "Failed to deallocate (munmap)");
+		err(1, "Failed to deallocate (munmap)");
 #ifdef BUILD_VALGRIND
 	VALGRIND_FREELIKE_BLOCK(p, 0);
 #endif

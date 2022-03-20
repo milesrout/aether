@@ -18,9 +18,9 @@ struct p2pstate {
 	union packet_state state;
 	const char *username;
 };
-extern void usage(char **, int);
-extern int alice(int argc, char **argv);
-extern int bob(int argc, char **argv);
+extern void usage(const char *, int);
+extern int alice(char **, int);
+extern int bob(char **, int);
 extern void interactive(struct ident_state *ident, union packet_state *state,
 	struct p2pstate **p2ptable, int fd);
 extern int register_identity(struct ident_state *ident,
@@ -28,3 +28,5 @@ extern int register_identity(struct ident_state *ident,
 	const char *name);
 extern int prompt_line(char **buf, size_t *len, size_t *size,
 	const char *prompt);
+#define CLIENT_STACK_SIZE (80 * 1024L)
+#define SERVER_STACK_SIZE (16 * 1024L)

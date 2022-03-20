@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
@@ -44,9 +45,9 @@
 #include "util.h"
 #include "queue.h"
 #include "packet.h"
-#include "peertable.h"
 #include "proof.h"
 #include "msg.h"
+#include "peertable.h"
 #include "ident.h"
 #include "messaging.h"
 #include "io.h"
@@ -58,7 +59,7 @@
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
 
-#define STACK_SIZE (128 * 1024)
+extern char *__progname;
 
 /* A note on terminology.
  *
@@ -77,7 +78,7 @@
  */
 
 struct stored_message {
-	uint8_t isk[32];
+	uint8_t  isk[32];
 	uint16_t size;
 	uint8_t *data;
 };
@@ -86,10 +87,10 @@ struct userinfo {
 	uint8_t ik[32];
 	uint8_t spk[32];
 	uint8_t spk_sig[64];
-	struct key *opks;
-	struct stored_message *letterbox;
-	char *username;
-	struct peer *peer;
+	struct  key *opks;
+	struct  stored_message *letterbox;
+	char   *username;
+	struct  peer *peer;
 };
 
 struct userkv {
@@ -98,7 +99,7 @@ struct userkv {
 };
 
 struct usernamev {
-	char *key;
+	char  *key;
 	struct key value;
 };
 
@@ -106,6 +107,15 @@ struct server_ctx {
 	struct peertable peertable;
 	struct userkv *table;
 	struct usernamev *namestable;
+	struct msgqueuehead spares;
+	int    fd;
+
+};
+
+struct handler_ctx {
+	struct server_ctx *ctx;
+	struct peer *peer;
+	int    should_quit;
 };
 
 static
@@ -176,7 +186,7 @@ send_packet_to(struct peer *peer, int fd, uint8_t *buf, size_t size)
 	const char *protosz = msg_proto(proto);
 	const char *typesz = msg_type(proto, type);
 
-	packet_lock(&peer->state, buf, size);
+	packet_lock(&peer->state.ps, buf, size);
 	error = safe_sendto(fd, buf, PACKET_BUF_SIZE(size),
 		sstosa(&peer->addr), peer->addr_len);
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
@@ -189,11 +199,13 @@ send_packet_to(struct peer *peer, int fd, uint8_t *buf, size_t size)
 
 static
 const char *
-handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_register(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	struct ident_register_msg *msg = (struct ident_register_msg *)text;
 	struct key isk;
 	struct userinfo ui = {0};
@@ -209,7 +221,7 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 	if (msg->username[msg->username_len] != '\0')
 		goto reply;
 
-	packet_get_iskc(isk.data, &peer->state);
+	packet_get_iskc(isk.data, &peer->state.ps);
 	if (kv = stbds_hmgetp_null(ctx->table, isk)) {
 		if (!strcmp(kv->value.username, (const char *)msg->username))
 			failure = 0;
@@ -228,16 +240,18 @@ handle_register(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf,
 
 reply:
 	size = ident_register_ack_init(text, text_size, failure);
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_spksub(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -246,7 +260,7 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 	if (size < IDENT_SPKSUB_MSG_SIZE)
 		goto reply;
 
-	packet_get_iskc(isk.data, &peer->state);
+	packet_get_iskc(isk.data, &peer->state.ps);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
 		goto reply;
 
@@ -259,16 +273,18 @@ handle_spksub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 
 reply:
 	size = ident_spksub_ack_init(text, text_size, failure);
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_opkssub(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -283,7 +299,7 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount))
 		goto reply;
 
-	packet_get_iskc(isk.data, &peer->state);
+	packet_get_iskc(isk.data, &peer->state.ps);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
 		goto reply;
 
@@ -298,16 +314,18 @@ handle_opkssub(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 
 reply:
 	size = ident_opkssub_ack_init(text, text_size, failure);
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_lookup(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
 	struct key k = {0};
 	uint8_t namelen;
@@ -326,16 +344,18 @@ handle_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 
 reply:
 	size = ident_lookup_rep_init(text, text_size, k.data);
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_reverse_lookup(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -354,16 +374,18 @@ handle_reverse_lookup(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t
 reply:
 	size = ident_reverse_lookup_rep_init(text, text_size,
 		value->username);
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_keyreq(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	struct ident_keyreq_msg *msg = (struct ident_keyreq_msg *)text;
 	struct key isk;
 	struct userkv *kv;
@@ -387,31 +409,34 @@ handle_keyreq(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, s
 reply:
 	size = ident_keyreq_rep_init(text, text_size,
 		value->spk, value->spk_sig, opk.data);
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_unknown(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_unknown(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	size_t size;
 
 	(void)ctx;
-	(void)nread;
 
 	size = msg_nack_init(text, text_size);
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_goodbye(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	const char *error;
 	struct userkv *kv;
 	struct key isk;
@@ -419,7 +444,7 @@ handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	if (size < MSG_GOODBYE_MSG_SIZE)
 		goto reply;
 
-	packet_get_iskc(isk.data, &peer->state);
+	packet_get_iskc(isk.data, &peer->state.ps);
 	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
 		goto reply;
 
@@ -429,18 +454,20 @@ handle_goodbye(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 
 reply:
 	size = msg_goodbye_ack_init(text, text_size, NULL);
-	error = send_packet_to(peer, fd, buf, size);
+	error = send_packet_to(peer, ctx->fd, qmsg->buf, size);
 	free(peer);
-	return error;
+	return error ? error : "goodbye";
 }
 
 static
 const char *
-handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_fetch(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	int msgcount = 0;
 	ptrdiff_t arrlen;
 	/* uint16_t slack; */
@@ -452,7 +479,7 @@ handle_fetch(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, si
 	if (size < MSG_FETCH_MSG_SIZE)
 		goto reply;
 
-	packet_get_iskc(isk.data, &peer->state);
+	packet_get_iskc(isk.data, &peer->state.ps);
 	if (!(kv = stbds_hmgetp_null(ctx->table, isk)))
 		goto reply;
 
@@ -483,16 +510,18 @@ reply:
 		}
 	}
 
-	return send_packet_to(peer, fd, buf, size);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
 static
 const char *
-handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, size_t bufsz, size_t nread)
+handle_forward(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t text_size = PACKET_TEXT_SIZE(bufsz);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	uint8_t *text = PACKET_TEXT(qmsg->buf);
+	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
+	size_t size = PACKET_TEXT_SIZE(qmsg->size);
+	struct peer *peer = hctx->peer;
+	struct server_ctx *ctx = hctx->ctx;
 	struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
 	struct msg_fetch_reply_msg *repmsg;
 	struct msg_fetch_content_msg *innermsg;
@@ -533,9 +562,9 @@ handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 		repmsg->msg.type = MSG_IMMEDIATE;
 
 		store16_le(innermsg->len, message_size);
-		packet_get_iskc(innermsg->isk, &peer->state);
+		packet_get_iskc(innermsg->isk, &peer->state.ps);
 
-		error = send_packet_to(kv->value.peer, fd, buf, repsize);
+		error = send_packet_to(kv->value.peer, ctx->fd, qmsg->buf, repsize);
 		if (!error)
 			goto reply;
 	}
@@ -544,158 +573,185 @@ handle_forward(struct server_ctx *ctx, struct peer *peer, int fd, uint8_t *buf, 
 	if (smsg.data == NULL)
 		return errnowrap("can't allocate stored message");
 
-	packet_get_iskc(smsg.isk, &peer->state);
+	packet_get_iskc(smsg.isk, &peer->state.ps);
 	memcpy(smsg.data, msg->messages + 2, message_size);
 	smsg.size = message_size;
 
-	crypto_wipe(buf, nread);
+	crypto_wipe(qmsg->buf, BUFSZ);
 
 	stbds_arrpush(kv->value.letterbox, smsg);
 
 reply:
 	repsize = msg_forward_ack_init(text, text_size, result);
-	return send_packet_to(peer, fd, buf, repsize);
+	return send_packet_to(peer, ctx->fd, qmsg->buf, repsize);
 }
 
-#define BUFSZ (65536)
-static
-const char *
-handle_datagram(int fd, struct server_ctx *ctx)
-{
-	size_t nread, bufsz = BUFSZ;
-	uint8_t buf[BUFSZ] = {0};
+/* TODO: Proof of work - to prevent denial of service:
+ * The server should require that the client does some
+ * proof-of-work task in order to initiate a connection.
+ * This task should be both memory-hard and time-hard
+ * for the client but easy to verify for the server.
+ *
+ * The hardness of the task could be altered based on:
+ * - current server load
+ * - trustworthiness of the client (after identity
+ *   verification)
+ * - niceness of the client (how much they load the
+ *   server and how much they're loading the server at
+ *   the moment)
+ * - any other relevant factors
+ *
+ * Peers that have given a proof of work will be
+ * 'confirmed' and able to roam.  Peers that have not
+ * given a proof of work will be 'unconfirmed', will
+ * not be able to roam, and hopefully will not be able
+ * to do anything that could DOS the server until they
+ * are confirmed.
+ */
+STAILQ_HEAD(hshakeqh, hmsg);
+struct hshake_ctx {
+	struct server_ctx *ctx;
+	struct hshakeqh hshakeq;
+	struct hshakeqh spares;
+	int    eventfd;
+};
+struct hmsg {
+	struct qmsg *qmsg;
 	struct peer *peer;
-	struct peer_init pi = {0};
+	STAILQ_ENTRY(hmsg) q;
+};
+
+static void
+handle_peer(long ctx_long, void *peer_void);
+
+static
+void
+handle_hshakes(long unused, void *hctx_void)
+{
+	struct hshake_ctx *hctx = hctx_void;
+	struct server_ctx *ctx = hctx->ctx;
 	const char *error;
+	struct hmsg *hmsg;
+	struct peer *peer;
+	struct qmsg *qmsg;
+	struct userkv *kv;
+	struct key isk;
+	long events;
+	ssize_t n;
 
-	pi.addr_len = sizeof(pi.addr);
-	error = safe_recvfrom(&nread, fd, buf, bufsz,
-		sstosa(&pi.addr), &pi.addr_len);
-	if (error) return error;
+	(void)unused;
 
-	printf("<- %zu\t", nread);
+	for (;;) {
+		while (hmsg = STAILQ_FIRST(&hctx->hshakeq)) {
+			STAILQ_REMOVE_HEAD(&hctx->hshakeq, q);
 
-	peer = peer_getbyaddr(&ctx->peertable, sstosa(&pi.addr), pi.addr_len);
-	if (peer == NULL) {
-		peer = peer_add(&ctx->peertable, &pi);
-		if (peer == NULL)
-			return "failed to add peer to peertable";
-	}
+			peer = hmsg->peer;
+			qmsg = hmsg->qmsg;
 
-	if (peer_getnameinfo(peer))
-		printf("unknown host and port: ");
-	else
-		printf("%s:%s\t", peer->host, peer->service);
+			STAILQ_INSERT_HEAD(&hctx->spares, hmsg, q);
 
-	/* This is either a HELLO message from a new peer or a message
-	 * from a peer that isn't new but has just changed addresses
-	 * that just happens to be exactly PACKET_HELLO_SIZE bytes.
-	 */
-	if (peer->status == PEER_NEW && nread == PACKET_HELLO_SIZE) {
-		const char *error = NULL;
+			printf("<- %zu\t", qmsg->size);
 
-		/* TODO: Proof of work - to prevent denial of service:
-		 * The server should require that the client does some
-		 * proof-of-work task in order to initiate a connection.
-		 * This task should be both memory-hard and time-hard
-		 * for the client but easy to verify for the server.
-		 *
-		 * The hardness of the task could be altered based on:
-		 * - current server load
-		 * - trustworthiness of the client (after identity
-		 *   verification)
-		 * - niceness of the client (how much they load the
-		 *   server and how much they're loading the server at
-		 *   the moment)
-		 * - any other relevant factors
-		 *
-		 * Peers that have given a proof of work will be
-		 * 'confirmed' and able to roam.  Peers that have not
-		 * given a proof of work will be 'unconfirmed', will
-		 * not be able to roam, and hopefully will not be able
-		 * to do anything that could DOS the server until they
-		 * are confirmed.
-		 */
+			packet_hshake_dprepare(&peer->state.ps,
+				isks, isks_prv,
+				iks, iks_prv,
+				NULL);
 
-		crypto_wipe(&peer->state, sizeof peer->state);
+			if (peer_getnameinfo(peer))
+				printf("unknown host and port: ");
+			else
+				printf("%s:%s\t", peer->host, peer->service);
 
-		packet_hshake_dprepare(&peer->state,
-			isks, isks_prv,
-			iks, iks_prv,
-			NULL);
-
-		if (!packet_hshake_dcheck(&peer->state, buf)) {
-			struct userkv *kv;
-			struct key isk;
+			if (packet_hshake_dcheck(&hmsg->peer->state.ps, hmsg->qmsg->buf)) {
+				printf("\tHSHAKE/UNKNOWN\n");
+				crypto_wipe(qmsg->buf, BUFSZ);
+				STAILQ_INSERT_HEAD(&hctx->ctx->spares, qmsg, q);
+				continue;
+			}
 
 			printf("\tHSHAKE/HELLO\n");
-			crypto_wipe(buf, PACKET_HELLO_SIZE);
+			crypto_wipe(hmsg->qmsg->buf, PACKET_HELLO_SIZE);
 
-			packet_hshake_dreply(&peer->state, buf);
-			error = safe_sendto(fd, buf, PACKET_REPLY_SIZE,
+			packet_hshake_dreply(&hmsg->peer->state.ps, hmsg->qmsg->buf);
+			error = safe_sendto(ctx->fd, qmsg->buf, PACKET_REPLY_SIZE,
 				sstosa(&peer->addr),
 				peer->addr_len);
-			crypto_wipe(buf, PACKET_REPLY_SIZE);
+			crypto_wipe(qmsg->buf, PACKET_REPLY_SIZE);
+			STAILQ_INSERT_HEAD(&hctx->ctx->spares, qmsg, q);
 			if (error)
-				return error;
+				err(1, "safe_sendto: %s", error);
 
 			peer->status = PEER_ACTIVE;
 			printf("-> %zu\t%s:%s\t\tHSHAKE/REPLY\n",
 				PACKET_REPLY_SIZE, peer->host, peer->service);
 			
-			print_table(ctx->table, 0);
-			packet_get_iskc(isk.data, &peer->state);
+			packet_get_iskc(isk.data, &peer->state.ps);
 			if (kv = stbds_hmgetp_null(ctx->table, isk)) {
 				kv->value.peer = peer;
-			} else {
-
 			}
 
-			return NULL;
+			fibre_go(FP_NORMAL, handle_peer, (long)ctx, peer);
 		}
 
-		/* Fall through: check if it's a real message */
+		do n = fibre_read(hctx->eventfd, &events, 8);
+		while (n == -1 && errno == EINTR);
 	}
+}
 
-	if (nread <= PACKET_BUF_SIZE(0))
-		return NULL;
+static
+const char *
+handle_packet(struct server_ctx *sctx, struct peer *peer, struct qmsg *qmsg)
+{
+	struct handler_ctx ctx = {sctx, peer};
+	uint8_t *buf, *text;
+	size_t size, nread;
+	struct msg *msg;
 
-	uint8_t *text = PACKET_TEXT(buf);
-	size_t size = PACKET_TEXT_SIZE(nread);
+	buf = qmsg->buf;
+	nread = qmsg->size;
+	text = PACKET_TEXT(buf);
+	size = PACKET_TEXT_SIZE(nread);
 
-	if (packet_unlock(&peer->state, buf, nread))
-		return NULL;
+	if (packet_unlock(&peer->state.ps, buf, nread))
+		return "could not unlock packet";
+
+	printf("<- %zu\t", qmsg->size);
+	if (peer_getnameinfo(peer))
+		printf("unknown host and port: ");
+	else
+		printf("%s:%s\t", peer->host, peer->service);
+
 
 	if (size >= sizeof(struct msg)) {
-		struct msg *msg = (struct msg *)text;
+		msg = (struct msg *)text;
 		printf("%d/%d\t%s/%s\n", msg->proto, msg->type,
 			msg_proto(msg->proto), msg_type(msg->proto, msg->type));
 		switch (msg->proto) {
 		case PROTO_IDENT:
 			switch (msg->type) {
 			case IDENT_REGISTER_MSG:
-				return handle_register(ctx, peer, fd, buf, bufsz, nread);
+				return handle_register(&ctx, qmsg);
 			case IDENT_SPKSUB_MSG:
-				return handle_spksub(ctx, peer, fd, buf, bufsz, nread);
+				return handle_spksub(&ctx, qmsg);
 			case IDENT_OPKSSUB_MSG:
-				return handle_opkssub(ctx, peer, fd, buf, bufsz, nread);
+				return handle_opkssub(&ctx, qmsg);
 			case IDENT_LOOKUP_MSG:
-				return handle_lookup(ctx, peer, fd, buf, bufsz, nread);
+				return handle_lookup(&ctx, qmsg);
 			case IDENT_REVERSE_LOOKUP_MSG:
-				return handle_reverse_lookup(ctx, peer, fd, buf, bufsz, nread);
+				return handle_reverse_lookup(&ctx, qmsg);
 			case IDENT_KEYREQ_MSG:
-				return handle_keyreq(ctx, peer, fd, buf, bufsz, nread);
+				return handle_keyreq(&ctx, qmsg);
 			default:
 				goto error;
 			}
 		case PROTO_MSG:
 			switch (msg->type) {
 			case MSG_GOODBYE_MSG:
-				return handle_goodbye(ctx, peer, fd, buf, bufsz, nread);
+				return handle_goodbye(&ctx, qmsg);
 			case MSG_FETCH_MSG:
-				return handle_fetch(ctx, peer, fd, buf, bufsz, nread);
+				return handle_fetch(&ctx, qmsg);
 			case MSG_FORWARD_MSG: 
-				return handle_forward(ctx, peer, fd, buf, bufsz, nread);
+				return handle_forward(&ctx, qmsg);
 			default:
 				goto error;
 			}
@@ -706,7 +762,103 @@ handle_datagram(int fd, struct server_ctx *ctx)
 
 error:
 	printf("UNKNOWN\n");
-	return handle_unknown(ctx, peer, fd, buf, bufsz, nread);
+	return handle_unknown(&ctx, qmsg);
+}
+
+
+static
+void
+handle_peer(long ctx_long, void *peer_void)
+{
+	struct server_ctx *ctx = (void *)ctx_long;
+	struct peer *peer = peer_void;
+	const char *error;
+	struct qmsg *qmsg;
+	uint64_t events;
+	ssize_t n;
+	
+	for (;;) {
+		while (qmsg = STAILQ_FIRST(&peer->recvq)) {
+			STAILQ_REMOVE_HEAD(&peer->recvq, q);
+			error = handle_packet(ctx, peer, qmsg);
+			crypto_wipe(qmsg->buf, BUFSZ);
+			STAILQ_INSERT_HEAD(&ctx->spares, qmsg, q);
+			if (error)
+				err(1, "handle_packet: %s", error);
+		}
+
+		do n = fibre_read(peer->eventfd, &events, 8);
+		while (n == -1 && errno == EINTR);
+	}
+}
+
+static
+const char *
+enqueue_hshake(struct hshake_ctx *hctx, struct peer_init *pi, struct qmsg *qmsg)
+{
+	struct peer *peer;
+	struct hmsg *hmsg;
+
+	peer = peer_add(&hctx->ctx->peertable, pi);
+	if (peer == NULL)
+		return "failed to add peer to peertable";
+
+	if (hmsg = STAILQ_FIRST(&hctx->spares))
+		STAILQ_REMOVE_HEAD(&hctx->spares, q);
+	else if ((hmsg = malloc(sizeof *hmsg)) == NULL)
+		return "out of memory";
+
+	hmsg->qmsg = qmsg;
+	hmsg->peer = peer;
+
+	STAILQ_INSERT_TAIL(&hctx->hshakeq, hmsg, q);
+	if (eventfd_write(hctx->eventfd, 1))
+		return errnowrap("can't signal eventfd");
+
+	return NULL;
+}
+
+static
+const char *
+enqueue_packet(struct peer *peer, struct qmsg *qmsg)
+{
+	STAILQ_INSERT_TAIL(&peer->recvq, qmsg, q);
+	if (eventfd_write(peer->eventfd, 1))
+		return errnowrap("can't signal eventfd");
+
+	return NULL;
+}
+
+static
+const char *
+handle_datagram(int fd, struct hshake_ctx *hctx)
+{
+	struct peer_init pi = {0};
+	struct peer *peer;
+	const char *error;
+	struct qmsg *qmsg;
+
+	if (qmsg = STAILQ_FIRST(&hctx->ctx->spares))
+		STAILQ_REMOVE_HEAD(&hctx->ctx->spares, q);
+	else if ((qmsg = malloc(sizeof *qmsg)) == NULL)
+		return "out of memory";
+
+	pi.addr_len = sizeof(pi.addr);
+	error = safe_recvfrom(&qmsg->size, fd, qmsg->buf, BUFSZ,
+		sstosa(&pi.addr), &pi.addr_len);
+	if (error) return error;
+
+
+	peer = peer_getbyaddr(&hctx->ctx->peertable, sstosa(&pi.addr), pi.addr_len);
+	if (peer == NULL) {
+		qmsg = realloc(qmsg, 1 + sizeof *qmsg);
+		return enqueue_hshake(hctx, &pi, qmsg);
+	}
+
+	if (qmsg->size > PACKET_BUF_SIZE(0))
+		return enqueue_packet(peer, qmsg);
+
+	return NULL;
 }
 
 static
@@ -758,15 +910,14 @@ end:
 
 static
 const char *
-handler(int fd, struct server_ctx *ctx)
+handler(int fd, struct hshake_ctx *hctx)
 {
 	const char *err;
 
 	for (;;) {
 		fibre_awaitfd(fd, EPOLLIN);
-		err = handle_datagram(fd, ctx);
-		if (err)
-			return err;
+		err = handle_datagram(fd, hctx);
+		if (err) return err;
 	}
 }
 
@@ -796,7 +947,7 @@ interval_timer(int secs)
 
 static
 void
-interval_timer_thread(int secs, void *unused)
+interval_timer_thread(long secs, void *unused)
 {
 	const char *error;
 
@@ -805,15 +956,15 @@ interval_timer_thread(int secs, void *unused)
 	error = interval_timer(secs);
 	if (error) {
 		fflush(stdout);
-		errx(EXIT_FAILURE, "interval_timer_thread: %s", error);
+		errx(1, "interval_timer_thread: %s", error);
 	}
 
-	exit(EXIT_SUCCESS);
+	exit(0);
 }
 
 static
 void
-user_input_thread(int unused, void *ctx_void)
+user_input_thread(long unused, void *ctx_void)
 {
 	const char *error;
 	struct server_ctx *ctx = (struct server_ctx *)ctx_void;
@@ -823,43 +974,68 @@ user_input_thread(int unused, void *ctx_void)
 	error = user_input(ctx);
 	if (error) {
 		fflush(stdout);
-		errx(EXIT_FAILURE, "user_input_thread: %s", error);
+		errx(1, "user_input_thread: %s", error);
 	}
 
-	exit(EXIT_SUCCESS);
+	exit(0);
 }
 
 static
 void
-handler_thread(int fd, void *ctx_void)
+handler_thread(long fd, void *ctx_void)
 {
-	struct server_ctx *ctx = (struct server_ctx *)ctx_void;
+	struct hshake_ctx *hctx = ctx_void;
 	const char *error;
 
-	error = handler(fd, ctx);
+	error = handler(fd, hctx);
 	if (error) {
 		fflush(stdout);
-		errx(EXIT_FAILURE, "handler_thread: %s", error);
+		errx(1, "handler_thread: %s", error);
 	}
 
-	exit(EXIT_SUCCESS);
+	exit(0);
 
 }
 
 static
 const char *
-serve(int argc, char **argv)
+serve(char **argv, int subopt)
 {
 	struct addrinfo hints, *result, *rp;
 	struct server_ctx ctx = {0};
+	struct hshake_ctx hctx = {&ctx};
+	struct optparse options;
 	const char *host, *port;
+	char nihost[NI_MAXHOST], niserv[NI_MAXSERV];
 	int fd = -1, gai;
+	int option;
 
-	if (argc < 2 || argc > 4)
-		usage(argv, 1);
+	optparse_init(&options, argv - 1);
+	options.permute = 0;
+	options.subopt = subopt;
 
-	host = argc < 3? "127.0.0.1" : argv[2];
-	port = argc < 4? "3443" : argv[3];
+	host = "127.0.0.1";
+	port = "3443";
+	while ((option = optparse(&options, "p:h:")) != -1) {
+		switch (option) {
+		case 'h':
+			host = options.optarg;
+			break;
+		case 'p':
+			port = options.optarg;
+			break;
+		default:
+			if (options.errmsg)
+				fprintf(stderr, "%s: %s",
+					__progname, options.errmsg);
+			fprintf(stderr, "usage: %s -D [-h HOST] [-p PORT]\n",
+				__progname);
+			exit(1);
+			break;
+		}
+	}
+
+	fibre_init(SERVER_STACK_SIZE);
 
 	if (peertable_init(&ctx.peertable))
 		return "couldn't initialise peer table";
@@ -884,6 +1060,13 @@ serve(int argc, char **argv)
 		if (fd == -1)
 			continue;
 
+		if (!getnameinfo(rp->ai_addr, rp->ai_addrlen,
+				nihost, NI_MAXHOST, niserv, NI_MAXSERV,
+				NI_NUMERICHOST|NI_NUMERICSERV))
+			fprintf(stderr, "!! %s:%s\n", nihost, niserv);
+		else
+			fprintf(stderr, "!! %s:%s\n", host, port);
+
 		if (bind(fd, rp->ai_addr, rp->ai_addrlen) == 0)
 			break;
 
@@ -897,6 +1080,15 @@ serve(int argc, char **argv)
 	if (rp == NULL)
 		return errnowrap("couldn't bind to socket");
 
+	STAILQ_INIT(&ctx.spares);
+	ctx.fd = fd;
+	STAILQ_INIT(&hctx.hshakeq);
+	STAILQ_INIT(&hctx.spares);
+
+	hctx.eventfd = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK);
+	if (hctx.eventfd == -1)
+		return errnowrap("eventfd");
+
 	fibre_go(FP_LOW, interval_timer_thread, 10, NULL);
 
 	/* this is safe, because serve()'s stack frame will live forever.
@@ -905,27 +1097,23 @@ serve(int argc, char **argv)
 	 * to before the function calling fibre_go returns.
 	 */
 	fibre_go(FP_HIGH, user_input_thread, 0, &ctx);
-	fibre_go(FP_NORMAL, handler_thread, fd, &ctx);
+	fibre_go(FP_NORMAL, handler_thread, fd, &hctx);
+	fibre_go(FP_LOW, handle_hshakes, 0, &hctx);
 
 	fibre_return();
 
-	exit(EXIT_SUCCESS);
+	exit(0);
 }
 
 static
 void
-proof(int argc, char **argv)
+proof(void)
 {
 	uint8_t response[96];
 	uint8_t challenge[32];
 	uint8_t signing_key[32];
 	uint8_t signing_key_prv[32];
 	uint8_t difficulty = 24;
-
-	(void)argv;
-
-	if (argc != 2)
-		usage(argv, 1);
 
 	randbytes(challenge, 32);
 	randbytes(signing_key_prv, 32);
@@ -937,65 +1125,57 @@ proof(int argc, char **argv)
 
 	proof_solve(response, challenge, signing_key, signing_key_prv, difficulty);
 
-	if (proof_check(response, challenge, signing_key, difficulty)) {
-		fprintf(stderr, "Could not verify challenge response.\n");
-		exit(EXIT_FAILURE);
-	} else {
-		fprintf(stderr, "Verified proof of work.\n");
-		exit(EXIT_SUCCESS);
-	}
+	if (proof_check(response, challenge, signing_key, difficulty))
+		err(1, "Could not verify challenge response");
+	else
+		err(0, "Verified proof of work");
 }
 
 static
 void
-keygen(int argc, char **argv)
+keygen(void)
 {
 	uint8_t pub[32], prv[32];
-
-	(void)argv;
-
-	if (argc != 2)
-		usage(argv, 1);
 
 	generate_kex_keypair(pub, prv);
 
 	displaykey_short("pub", pub, 32);
 	displaykey_short("prv", prv, 32);
 
-	exit(EXIT_SUCCESS);
+	exit(0);
 }
 
 static intptr_t counter;
 
 static
 void
-test_fibre(int j, void *unused)
+test_fibre(long j, void *unused)
 {
 	static int i;
 	struct timespec ts = {0};
 
 	(void)unused;
 
-	printf("Hello from %d %d (%d)\n", j, fibre_current(), i);
+	printf("Hello from %ld %d (%d)\n", j, fibre_current(), i);
 	if (++i < 3) {
 		/* printf("Sleep1 from %d %d (%d)!\n", j, fibre_current(), i); */
 		/* ts.tv_sec = 1; */
 		/* fibre_sleep(&ts); */
-		printf("Go1 from %d %d (%d)!\n", j, fibre_current(), i);
+		printf("Go1 from %ld %d (%d)!\n", j, fibre_current(), i);
 		fibre_go(FP_NORMAL, test_fibre, counter++, NULL);
-		printf("Sleep2 from %d %d (%d)!\n", j, fibre_current(), i);
+		printf("Sleep2 from %ld %d (%d)!\n", j, fibre_current(), i);
 		ts.tv_sec = 2;
 		fibre_sleep(&ts);
-		printf("Go2 from %d %d (%d)!\n", j, fibre_current(), i);
+		printf("Go2 from %ld %d (%d)!\n", j, fibre_current(), i);
 		fibre_go(FP_NORMAL, test_fibre, counter++, NULL);
 	}
-	printf("Goodbye from %d %d (%d)\n", j, fibre_current(), i);
+	printf("Goodbye from %ld %d (%d)\n", j, fibre_current(), i);
 	fibre_return();
 }
 
 static
 void
-test_fibre2(int unused1, void *unused2)
+test_fibre2(long unused1, void *unused2)
 {
 	int fd;
 	ssize_t nread;
@@ -1006,92 +1186,108 @@ test_fibre2(int unused1, void *unused2)
 
 	fd = open("example.txt", O_RDWR|O_NONBLOCK);
 	if (fd == -1)
-		err(EXIT_FAILURE, "Could not open `%s'", "example.txt");
+		err(1, "Could not open `%s'", "example.txt");
 
 	do nread = fibre_read(fd, buf, 255);
 	while (nread == -1 && errno == EINTR);
 	if (nread == -1)
-		err(EXIT_FAILURE, "Could not read from `%s'", "example.txt");
+		err(1, "Could not read from `%s'", "example.txt");
 
 	displaykey("buf", (void *)buf, 256);
 }
 
 static
 void
-fibre(int argc, char **argv)
+fibre(void)
 {
-	(void)argc;
-	(void)argv;
-
+	fibre_init(1024);
 	fibre_go(FP_NORMAL, test_fibre, counter++, NULL);
 	fibre_go(FP_HIGH, test_fibre2, 0, NULL);
 	while (fibre_yield());
 	fibre_return();
 
-	exit(EXIT_SUCCESS);
+	exit(0);
 }
 
 static
 void
-persist(int argc, char **argv)
+persist(char **argv, int subopt)
 {
 	uint8_t *buf;
 	size_t size;
-	const char *command;
 	const char *filename;
 	ssize_t password_size;
 	char *password = NULL;
 	size_t password_bufsize = 0;
+	struct optparse options;
+	int option;
+	int cmd = 0;
 
-	if (argc != 4)
-		usage(argv, 1);
+	optparse_init(&options, argv);
+	options.permute = 0;
+	options.subopt = subopt;
 
-	command = argv[2];
-	filename = argv[3];
+	filename = NULL;
+	while ((option = optparse(&options, "r:w:"))) switch (option) {
+		case 'r':
+		case 'w':
+			if (cmd)
+				usage(NULL, 1);
+			cmd = option;
+			filename = options.optarg;
+			break;
+		default:
+			usage(options.errmsg, 1);
+			break;
+	}
+
+	if (!cmd)
+		usage(NULL, 1);
 
 	printf("password: ");
 	if ((password_size = getline(&password, &password_bufsize, stdin)) == -1)
-		err(EXIT_FAILURE, "Could not read password from stdin");
+		err(1, "Could not read password from stdin");
 
 	assert(password[password_size - 1] == '\n');
 	assert(password[password_size] == '\0');
 	password[password_size - 1] = '\0';
 	password_size--;
 
-	if (command[0] == 'r') {
+	if (cmd == 'r') {
 		if (persist_read(&buf, &size, filename, password, password_size))
-			errx(EXIT_FAILURE, "Could not load from `%s'", filename);
+			errx(1, "Could not load from `%s'", filename);
 		displaykey("data", buf, size);
 		fprintf(stderr, "%.*s\n", (int)size, buf);
-	} else if (command[0] == 'w') {
+	} else if (cmd == 'w') {
 		buf = calloc(1, 16);
 		if (buf == NULL)
-			err(EXIT_FAILURE, "calloc");
+			err(1, "calloc");
 		memcpy(buf, "hello, world!", strlen("hello, world!") + 1);
 		size = 16;
 		if (persist_write(filename, buf, size, password, password_size))
-			errx(EXIT_FAILURE, "Could not store to `%s'", filename);
-	} else {
-		usage(argv, 1);
+			errx(1, "Could not store to `%s'", filename);
 	}
 
-	exit(EXIT_SUCCESS);
-}
-
-void
-usage(char **argv, int ret)
-{
-	fprintf(stderr, "usage: %s [-hABDFKPRV]\n",
-		argv[0]);
-	exit(ret);
+	exit(0);
 }
 
 static
 void
-version(char **argv)
+version(void)
 {
-	fprintf(stderr, "%s version master", argv[0]);
+	fprintf(stderr, "aether version master\n");
 	exit(0);
+}
+
+#define OPTIONS "hABDFKPRV"
+
+void
+usage(const char *errmsg, int ret)
+{
+	if (errmsg)
+		warnx("%s", errmsg);
+	fprintf(stderr, "usage: %s [-hABDFKPRV]\n", __progname);
+	exit(ret);
 }
 
 int
@@ -1103,35 +1299,34 @@ main(int argc, char **argv)
 	int option;
 
 	if (argc < 2)
-		usage(argv, 1);
+		usage(NULL, 1);
 
 	randbytes(seed, 8);
 	stbds_rand_seed(load64_le(seed));
-	fibre_init(STACK_SIZE);
 
 	optparse_init(&options, argv);
 	options.permute = 0;
 
-	while ((option = optparse(&options, "ABDFKPRVh")) != -1) {
+	if ((option = optparse(&options, "hABDFKPRV")) != -1) {
 		switch (option) {
-		case 'A': alice(argc, argv); break;
-		case 'B': bob(argc, argv); break;
-		case 'D': error = serve(argc, argv); break;
-		case 'F': fibre(argc, argv); break;
-		case 'K': keygen(argc, argv); break;
-		case 'P': proof(argc, argv); break;
-		case 'R': persist(argc, argv); break;
-		case 'V': version(argv); break;
-		case 'h': usage(argv, 0); break;
-		default:  usage(argv, 1);
+		case 'A': alice(argv + options.optind, options.subopt); break;
+		case 'B': bob(argv + options.optind, options.subopt); break;
+		case 'D': error = serve(argv + options.optind, options.subopt); break;
+		case 'F': fibre(); break;
+		case 'K': keygen(); break;
+		case 'P': proof(); break;
+		case 'R': persist(argv + options.optind, options.subopt); break;
+		case 'V': version(); break;
+		case 'h': usage(NULL, 0); break;
+		default:  usage(options.errmsg, 1);
 		}
-	}
+	} else usage(NULL, 1);
 
 	if (error) {
 		fflush(stdout);
-		errx(EXIT_FAILURE, "%s", error);
+		errx(1, "%s", error);
 	}
 
 	/* the functions dispatched above should not return */
-	usage(argv, 1);
+	usage(NULL, 1);
 }

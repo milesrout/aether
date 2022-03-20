@@ -33,13 +33,13 @@ timerfd_open(struct timespec ts)
 
 	fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK|TFD_CLOEXEC);
 	if (fd == -1)
-		err(EXIT_FAILURE, "Could not create fd");
+		err(1, "Could not create fd");
 
 	timer.it_value = ts;
 	timer.it_interval = ts;
 
 	if (timerfd_settime(fd, 0, &timer, NULL))
-		err(EXIT_FAILURE, "Could not set timer");
+		err(1, "Could not set timer");
 
 	return fd;
 }

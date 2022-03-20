@@ -22,12 +22,12 @@
 #include <string.h>
 #include <sys/socket.h>
 
-#include "util.h"
-#include "msg.h"
-#include "ident.h"
-#include "messaging.h"
 #include "queue.h"
 #include "packet.h"
+#include "msg.h"
+#include "util.h"
+#include "ident.h"
+#include "messaging.h"
 #include "hkdf.h"
 #include "monocypher.h"
 #include "persist.h"

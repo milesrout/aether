@@ -31,7 +31,7 @@ extern void fibre_finish(void);
 extern int fibre_yield(void);
 extern void fibre_return(void);
 extern int fibre_current(void);
-extern void fibre_go(int prio, void (*)(int, void *), int, void *);
+extern void fibre_go(int prio, void (*)(long, void *), long, void *);
 extern int fibre_awaitfd(int fd, int events);
 extern void fibre_close(int fd);
 extern int fibre_sleep(const struct timespec *);

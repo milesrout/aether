@@ -152,7 +152,7 @@ hash_password(uint8_t key[32], const uint8_t salt[16], const char *password, siz
 {
 	uint8_t *work_area = calloc(ARGON2I_BLOCK_SIZE, ARGON2I_BLOCKS);
 	if (work_area == NULL)
-		err(EXIT_FAILURE, "Could not allocate memory for Argon2i work area");
+		err(1, "Could not allocate memory for Argon2i work area");
 
 	crypto_argon2i(
 		key, 32,

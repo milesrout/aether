@@ -19,6 +19,8 @@ struct msg {
 	uint8_t type;
 	uint8_t len[2];
 };
-
-extern const char *msg_proto(uint8_t proto);
-extern const char *msg_type(uint8_t proto, uint8_t type);
+struct msg_state {
+	union packet_state ps;
+};
+extern const char *msg_proto(uint8_t);
+extern const char *msg_type(uint8_t, uint8_t);

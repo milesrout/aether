@@ -14,14 +14,22 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+struct qmsg {
+	STAILQ_ENTRY(qmsg) q;
+	size_t size;
+	char   buf[BUFSZ];
+};
+STAILQ_HEAD(msgqueuehead, qmsg);
 struct peer {
-	int                     status;
-	struct sockaddr_storage addr;
-	socklen_t               addr_len;
-	char                    host[NI_MAXHOST];
-	char                    service[NI_MAXSERV];
-	uint64_t		hash;
-	union packet_state      state;
+	int       status;
+	struct    sockaddr_storage addr;
+	socklen_t addr_len;
+	char      host[NI_MAXHOST];
+	char      service[NI_MAXSERV];
+	uint64_t  hash;
+	struct    msg_state state;
+	int       eventfd;
+	struct    msgqueuehead recvq;
 };
 enum peer_status {
 	PEER_NEW,		/* the initial state of all peers */
@@ -29,14 +37,14 @@ enum peer_status {
 	PEER_ACTIVE,		/* the handshake is complete */
 };
 struct peer_init {
-	struct sockaddr_storage addr;
-	socklen_t               addr_len;
+	struct    sockaddr_storage addr;
+	socklen_t addr_len;
 };
 struct peertable {
 	struct peer **table;
-	size_t        tombs;
-	size_t        size;
-	size_t        cap;
+	size_t tombs;
+	size_t size;
+	size_t cap;
 };
 extern int peertable_init(struct peertable *);
 extern void peertable_finish(struct peertable *);

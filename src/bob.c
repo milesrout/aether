@@ -32,6 +32,7 @@
 #include <sys/types.h>
 
 #include "monocypher.h"
+#include "optparse.h"
 #define STBDS_NO_SHORT_NAMES
 #include "stb_ds.h"
 
@@ -40,9 +41,9 @@
 #include "util.h"
 #include "queue.h"
 #include "packet.h"
-#include "peertable.h"
 #include "proof.h"
 #include "msg.h"
+#include "peertable.h"
 #include "ident.h"
 #include "messaging.h"
 #include "io.h"
@@ -71,13 +72,13 @@ send_packet(union packet_state *state, int fd, uint8_t *buf, size_t size)
 
 static
 int
-handle_ident_replies(union packet_state *state, int fd, uint8_t buf[65536])
+handle_ident_replies(union packet_state *state, int fd, uint8_t buf[BUFSZ])
 {
 	uint8_t *text = PACKET_TEXT(buf);
 	size_t nread, size;
 	const char *error;
 
-	error = safe_read(&nread, fd, buf, 65536);
+	error = safe_read(&nread, fd, buf, BUFSZ);
 	if (error)
 		errg(fail, "handle_ident_replies: Failed to read from socket: %s", error);
 
@@ -134,7 +135,7 @@ handle_ident_replies(union packet_state *state, int fd, uint8_t buf[65536])
 
 	return 0;
 fail:
-	crypto_wipe(buf, 65536);
+	crypto_wipe(buf, BUFSZ);
 	return -1;
 }
 
@@ -226,11 +227,11 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 			ssize = msg_goodbye_init(PACKET_TEXT(buf),
 				PACKET_TEXT_SIZE(bufsz), NULL);
 			if (ssize == -1)
-				errx(EXIT_FAILURE, "Failed to create GOODBYE");
+				errx(1, "Failed to create GOODBYE");
 			size = (size_t)ssize;
 			error = send_packet(state, fd, buf, size);
 			if (error)
-				errx(EXIT_FAILURE, "Failed to send GOODBYE: %s", error);
+				errx(1, "Failed to send GOODBYE: %s", error);
 		} else {
 			printf("Unknown command: %s\n", text);
 		}
@@ -248,7 +249,7 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 	error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 	if (error)
-		errx(EXIT_FAILURE, "Failed to send message: %s", error);
+		errx(1, "Failed to send message: %s", error);
 }
 
 static
@@ -415,10 +416,10 @@ handle_message(struct ident_state *ident, union packet_state *state,
 			p2pstate = &(*p2ptable)[stbds_hmlen(*p2ptable) - 1];
 		}
 
-		if (!try_unlock_raw_message(&p2pstate->state, content, &text, &text_size)) 
+		if (!try_unlock_raw_message(&p2pstate->state, content, &text, &text_size))
 			goto done;
 
-		if (!try_unlock_prefixed_message(&p2pstate->state, content, &text, &text_size)) 
+		if (!try_unlock_prefixed_message(&p2pstate->state, content, &text, &text_size))
 			goto done;
 
 		if (!try_unlock_hshake_message(ident, &p2pstate->state, content, &text, &text_size))
@@ -435,7 +436,7 @@ handle_message(struct ident_state *ident, union packet_state *state,
 
 	result = 0;
 fail:
-	crypto_wipe(buf, 65536);
+	crypto_wipe(buf, BUFSZ);
 	return result;
 }
 
@@ -503,7 +504,7 @@ handle_packet(struct ident_state *ident, union packet_state *state,
 	loop_quit:
 		if (save_on_quit)
 			store_keys("alice.keys", "alice", strlen("alice"), ident, *p2ptable);
-		exit(EXIT_SUCCESS);
+		exit(0);
 	loop_continue:
 		crypto_wipe(buf, nread);
 	}
@@ -517,9 +518,10 @@ struct client_ctx {
 
 static
 void
-fetch_thread(int fd, void *arg)
+fetch_thread(long fd_long, void *ctx_void)
 {
-	struct client_ctx *ctx = (struct client_ctx *)arg;
+	struct client_ctx *ctx = ctx_void;
+	int fd = fd_long;
 	struct timespec ts = {15};
 	uint64_t expirations;
 	uint8_t buf[1024];
@@ -530,7 +532,7 @@ fetch_thread(int fd, void *arg)
 
 	timerfd = timerfd_open(ts);
 	if (timerfd == -1)
-		err(EXIT_FAILURE, "timerfd_open");
+		err(1, "timerfd_open");
 
 	for (;;) {
 		do n = fibre_read(timerfd, &expirations, sizeof expirations);
@@ -540,7 +542,7 @@ fetch_thread(int fd, void *arg)
 
 		size = msg_fetch_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz));
 		if (size == -1)
-			err(EXIT_FAILURE, "Could not create FETCH message");
+			err(1, "Could not create FETCH message");
 		packet_lock(ctx->state, buf, size);
 		error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
 		crypto_wipe(buf, PACKET_BUF_SIZE(size));
@@ -551,11 +553,12 @@ fetch_thread(int fd, void *arg)
 
 static
 void
-input_thread(int fd, void *arg)
+input_thread(long fd_long, void *ctx_void)
 {
-	struct client_ctx *ctx = (struct client_ctx *)arg;
-	uint8_t buf[65536];
-	size_t bufsz = 65536;
+	struct client_ctx *ctx = ctx_void;
+	int fd = fd_long;
+	uint8_t buf[BUFSZ];
+	size_t bufsz = BUFSZ;
 
 	fcntl_nonblock(STDIN_FILENO);
 
@@ -567,11 +570,12 @@ input_thread(int fd, void *arg)
 
 static
 void
-handler_thread(int fd, void *arg)
+handler_thread(long fd_long, void *ctx_void)
 {
-	struct client_ctx *ctx = (struct client_ctx *)arg;
-	uint8_t buf[65536] = {0};
-	size_t bufsz = 65536;
+	struct client_ctx *ctx = ctx_void;
+	int fd = fd_long;
+	uint8_t buf[BUFSZ] = {0};
+	size_t bufsz = BUFSZ;
 
 	for (;;) {
 		handle_packet(ctx->ident, ctx->state, ctx->p2ptable, fd, buf, bufsz);
@@ -584,14 +588,14 @@ interactive(struct ident_state *ident, union packet_state *state,
 {
 	int dupfd1, dupfd2;
 	struct client_ctx ctx = {ident, state, p2ptable};
- 
+
 	dupfd1 = fcntl(fd, F_DUPFD_CLOEXEC, 0);
 	if (dupfd1 == -1)
-		err(EXIT_FAILURE, "fcntl(F_DUPFD_CLOEXEC)");
+		err(1, "fcntl(F_DUPFD_CLOEXEC)");
 
 	dupfd2 = fcntl(fd, F_DUPFD_CLOEXEC, 0);
 	if (dupfd2 == -1)
-		err(EXIT_FAILURE, "fcntl(F_DUPFD_CLOEXEC)");
+		err(1, "fcntl(F_DUPFD_CLOEXEC)");
 
 	fibre_go(FP_BACKGROUND, fetch_thread, fd, &ctx);
 	fibre_go(FP_NORMAL, input_thread, dupfd1, &ctx);
@@ -623,7 +627,7 @@ register_identity(struct ident_state *ident, union packet_state *state,
 		packet_lock(state, buf, size);
 		error = safe_write(fd, buf, PACKET_BUF_SIZE(size));
 		if (error) {
-			fprintf(stderr, "register_identity: safe_write: %s\n", error); 
+			fprintf(stderr, "register_identity: safe_write: %s\n", error);
 			return -1;
 		}
 		crypto_wipe(buf, PACKET_BUF_SIZE(size));
@@ -647,25 +651,36 @@ register_identity(struct ident_state *ident, union packet_state *state,
 }
 
 int
-bob(int argc, char **argv)
+bob(char **argv, int subopt)
 {
 	int fd;
 	const char *host, *port;
 	union packet_state state = {0};
 	struct ident_state ident = {0};
 	struct p2pstate *p2ptable = NULL;
-	uint8_t buf[65536];
-	size_t bufsz = 65536;
+	uint8_t buf[BUFSZ];
+	size_t bufsz = BUFSZ;
 	const char *error;
 	size_t nread;
+	struct optparse options;
+	int option;
 
-	if (argc < 2 || argc > 4)
-		usage(argv, 1);
+	optparse_init(&options, argv - 1);
+	options.permute = 0;
+	options.subopt = subopt;
 
-	host = argc < 3? "127.0.0.1" : argv[2];
-	port = argc < 4? "3443" : argv[3];
+	host = "127.0.0.1";
+	port = "3443";
+
+	while ((option = optparse(&options, "h:p:")) != -1) switch (option) {
+		case 'h': host = options.optarg; break;
+		case 'p': port = options.optarg; break;
+		default: usage(options.errmsg, 1); break;
+	}
+
 
 	save_on_quit = 0;
+	fibre_init(CLIENT_STACK_SIZE);
 
 	generate_sig_keypair(ident.isk, ident.isk_prv);
 	crypto_from_eddsa_public(ident.ik,      ident.isk);
@@ -673,7 +688,7 @@ bob(int argc, char **argv)
 
 	fd = setclientup(host, port);
 	if (fd == -1)
-		err(EXIT_FAILURE, "Could not set client up");
+		err(1, "Could not set client up");
 
 	packet_hshake_cprepare(&state, isks, iks,
 		ident.isk, ident.isk_prv,
@@ -685,17 +700,17 @@ bob(int argc, char **argv)
 
 	error = safe_read(&nread, fd, buf, PACKET_REPLY_SIZE + 1);
 	if (error)
-		errx(EXIT_FAILURE, "Could not read from socket: %s", error);
+		errx(1, "Could not read from socket: %s", error);
 	if (nread != PACKET_REPLY_SIZE)
-		errx(EXIT_FAILURE, "Received invalid REPLY from server");
+		errx(1, "Received invalid REPLY from server");
 	if (packet_hshake_cfinish(&state, buf))
-		errx(EXIT_FAILURE, "REPLY message cannot be decrypted");
+		errx(1, "REPLY message cannot be decrypted");
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	if (register_identity(&ident, &state, fd, buf, bufsz, "bob"))
-		errx(EXIT_FAILURE, "Cannot register username bob");
+		errx(1, "Cannot register username bob");
 
 	interactive(&ident, &state, &p2ptable, fd);
 
-	exit(EXIT_SUCCESS);
+	exit(0);
 }

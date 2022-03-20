@@ -17,6 +17,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "queue.h"
+#include "packet.h"
 #include "msg.h"
 #include "proto-ident.h"
 #include "proto-messaging.h"
@@ -66,4 +68,3 @@ msg_type(uint8_t proto, uint8_t type)
 		return "UNKNOWN";
 	}
 }
-

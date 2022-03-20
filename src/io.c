@@ -83,10 +83,10 @@ fcntl_nonblock(int fd)
 
 	flags = fcntl(fd, F_GETFL);
 	if (flags == -1)
-		err(EXIT_FAILURE, "fcntl_nonblock: fcntl(F_GETFL)");
+		err(1, "fcntl_nonblock: fcntl(F_GETFL)");
 
 	if (fcntl(fd, F_SETFL, flags|O_NONBLOCK))
-		err(EXIT_FAILURE, "fcntl_nonblock: fcntl(F_SETFL)");
+		err(1, "fcntl_nonblock: fcntl(F_SETFL)");
 
 	return 0;
 }

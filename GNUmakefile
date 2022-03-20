@@ -20,7 +20,9 @@ else
 endif
 
 ifneq ($(BUILD),release)
+ifneq ($(BUILD),musl)
 	CFLAGS += -Werror
+endif
 endif
 
 CFLAGS    += -DBUILD_$(shell echo '$(BUILD)' | tr '[:lower:]' '[:upper:]')

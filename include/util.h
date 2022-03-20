@@ -44,3 +44,4 @@ extern const char *errnowrap(const char *pre);
 extern const char *errwrap(const char *pre, const char *post);
 extern const char *errfmt(const char *fmt, ...);
 #define container_of(type, member, ptr) (type *)(void *)(((char *)(ptr)) - offsetof(type, member))
+#define BUFSZ 1500

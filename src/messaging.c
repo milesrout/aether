@@ -22,10 +22,10 @@
 #include <string.h>
 #include <sys/types.h>
 
-#include "msg.h"
 #include "queue.h"
-#include "messaging.h"
 #include "packet.h"
+#include "msg.h"
+#include "messaging.h"
 #include "persist.h"
 #include "util.h"
 
