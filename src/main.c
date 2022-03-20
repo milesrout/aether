@@ -455,8 +455,8 @@ handle_goodbye(struct handler_ctx *hctx, struct qmsg *qmsg)
 reply:
 	size = chat_goodbye_ack_init(text, text_size, NULL);
 	error = send_packet_to(peer, ctx->fd, qmsg->buf, size);
-	free(peer);
-	return error ? error : "goodbye";
+	hctx->should_quit = 1;
+	return error;
 }
 
 static
@@ -700,9 +700,8 @@ handle_hshakes(long unused, void *hctx_void)
 
 static
 const char *
-handle_packet(struct server_ctx *sctx, struct peer *peer, struct qmsg *qmsg)
+handle_packet(struct handler_ctx *ctx, struct peer *peer, struct qmsg *qmsg)
 {
-	struct handler_ctx ctx = {sctx, peer};
 	uint8_t *buf, *text;
 	size_t size, nread;
 	struct msg *msg;
@@ -721,40 +720,11 @@ handle_packet(struct server_ctx *sctx, struct peer *peer, struct qmsg *qmsg)
 	else
 		printf("%s:%s\t", peer->host, peer->service);
 
-
 	if (size >= sizeof(struct msg)) {
 		msg = (struct msg *)text;
 		printf("%d/%d\t%s/%s\n", msg->proto, msg->type,
 			msg_proto(msg->proto), msg_type(msg->proto, msg->type));
 		switch (msg->proto) {
-		case PROTO_IDENT:
-			switch (msg->type) {
-			case IDENT_REGISTER_MSG:
-				return handle_register(&ctx, qmsg);
-			case IDENT_SPKSUB_MSG:
-				return handle_spksub(&ctx, qmsg);
-			case IDENT_OPKSSUB_MSG:
-				return handle_opkssub(&ctx, qmsg);
-			case IDENT_LOOKUP_MSG:
-				return handle_lookup(&ctx, qmsg);
-			case IDENT_REVERSE_LOOKUP_MSG:
-				return handle_reverse_lookup(&ctx, qmsg);
-			case IDENT_KEYREQ_MSG:
-				return handle_keyreq(&ctx, qmsg);
-			default:
-				goto error;
-			}
-		case PROTO_CHAT:
-			switch (msg->type) {
-			case CHAT_GOODBYE_MSG:
-				return handle_goodbye(&ctx, qmsg);
-			case CHAT_FETCH_MSG:
-				return handle_fetch(&ctx, qmsg);
-			case CHAT_FORWARD_MSG: 
-				return handle_forward(&ctx, qmsg);
-			default:
-				goto error;
-			}
 		case PROTO_MSG:
 			switch (msg->type) {
 			case MSG_ACK:
@@ -775,6 +745,34 @@ handle_packet(struct server_ctx *sctx, struct peer *peer, struct qmsg *qmsg)
 			default:
 				goto error;
 			}
+		case PROTO_IDENT:
+			switch (msg->type) {
+			case IDENT_REGISTER_MSG:
+				return handle_register(ctx, qmsg);
+			case IDENT_SPKSUB_MSG:
+				return handle_spksub(ctx, qmsg);
+			case IDENT_OPKSSUB_MSG:
+				return handle_opkssub(ctx, qmsg);
+			case IDENT_LOOKUP_MSG:
+				return handle_lookup(ctx, qmsg);
+			case IDENT_REVERSE_LOOKUP_MSG:
+				return handle_reverse_lookup(ctx, qmsg);
+			case IDENT_KEYREQ_MSG:
+				return handle_keyreq(ctx, qmsg);
+			default:
+				goto error;
+			}
+		case PROTO_CHAT:
+			switch (msg->type) {
+			case CHAT_GOODBYE_MSG:
+				return handle_goodbye(ctx, qmsg);
+			case CHAT_FETCH_MSG:
+				return handle_fetch(ctx, qmsg);
+			case CHAT_FORWARD_MSG:
+				return handle_forward(ctx, qmsg);
+			default:
+				goto error;
+			}
 		default:
 			goto error;
 		}
@@ -782,29 +780,35 @@ handle_packet(struct server_ctx *sctx, struct peer *peer, struct qmsg *qmsg)
 
 error:
 	printf("UNKNOWN\n");
-	return handle_unknown(&ctx, qmsg);
+	return handle_unknown(ctx, qmsg);
 }
 
 
 static
 void
-handle_peer(long ctx_long, void *peer_void)
+handle_peer(long sctx_long, void *peer_void)
 {
-	struct server_ctx *ctx = (void *)ctx_long;
+	struct server_ctx *sctx = (void *)sctx_long;
 	struct peer *peer = peer_void;
+	struct handler_ctx ctx = {sctx, peer};
 	const char *error;
 	struct qmsg *qmsg;
 	uint64_t events;
 	ssize_t n;
 	
 	for (;;) {
-		while (qmsg = STAILQ_FIRST(&peer->recvq)) {
+		while (!ctx.should_quit && (qmsg = STAILQ_FIRST(&peer->recvq))) {
 			STAILQ_REMOVE_HEAD(&peer->recvq, q);
-			error = handle_packet(ctx, peer, qmsg);
+			error = handle_packet(&ctx, peer, qmsg);
 			crypto_wipe(qmsg->buf, BUFSZ);
-			STAILQ_INSERT_HEAD(&ctx->spares, qmsg, q);
-			if (error)
-				err(1, "handle_packet: %s", error);
+			STAILQ_INSERT_HEAD(&ctx.ctx->spares, qmsg, q);
+			if (error) err(1, "handle_packet: %s", error);
+		}
+
+		if (ctx.should_quit) {
+			peer_del(&ctx.ctx->peertable, peer);
+			free(peer);
+			return;
 		}
 
 		do n = fibre_read(peer->eventfd, &events, 8);
