@@ -14,6 +14,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "proto-msg.h"
+
 struct msg {
 	uint8_t proto;
 	uint8_t type;
@@ -24,3 +26,22 @@ struct msg_state {
 };
 extern const char *msg_proto(uint8_t);
 extern const char *msg_type(uint8_t, uint8_t);
+
+struct msg_ack_msg {
+	struct msg msg;
+	uint64_t msgid;
+};
+#define MSG_ACK_SIZE (sizeof(struct msg_ack_msg))
+struct msg_nack_msg {
+	struct msg msg;
+	uint64_t msgid;
+};
+#define MSG_NACK_SIZE (sizeof(struct msg_nack_msg))
+struct msg_unack_msg {
+	struct msg msg;
+	uint64_t msgid;
+};
+#define MSG_UNACK_SIZE (sizeof(struct msg_unack_msg))
+extern ssize_t msg_ack_init(uint8_t *text, size_t size);
+extern ssize_t msg_nack_init(uint8_t *text, size_t size);
+extern ssize_t msg_unack_init(uint8_t *text, size_t size);

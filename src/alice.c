@@ -36,7 +36,7 @@
 #include "packet.h"
 #include "msg.h"
 #include "ident.h"
-#include "messaging.h"
+#include "chat.h"
 #include "main.h"
 #include "util.h"
 #include "io.h"
@@ -385,7 +385,7 @@ alice(char **argv, int subopt)
 		case 'n': mode = 'n'; break;
 		case 'h': host = options.optarg; break;
 		case 'p': port = options.optarg; break;
-		default: usage(option == '?' ? options.errmsg : NULL, 1); break;
+		default:  usage(option == '?' ? options.errmsg : NULL, 1); break;
 	}
 
 	save_on_quit = 1;

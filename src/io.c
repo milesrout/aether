@@ -91,13 +91,6 @@ fcntl_nonblock(int fd)
 	return 0;
 }
 
-
-struct sockaddr *
-sstosa(struct sockaddr_storage *ss)
-{
-	return (struct sockaddr *)ss;
-}
-
 const char *
 safe_read(size_t *nread, int fd, uint8_t *buf, size_t size)
 {

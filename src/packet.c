@@ -27,7 +27,7 @@
 #include "msg.h"
 #include "util.h"
 #include "ident.h"
-#include "messaging.h"
+#include "chat.h"
 #include "hkdf.h"
 #include "monocypher.h"
 #include "persist.h"
@@ -890,7 +890,7 @@ send_ohello_message(union packet_state *state, union packet_state *p2pstate,
 		const uint8_t *content, size_t content_size)
 {
 	uint8_t *text = PACKET_TEXT(buf);
-	uint8_t *ohellomsg = text + MSG_FORWARD_MSG_BASE_SIZE + 2;
+	uint8_t *ohellomsg = text + CHAT_FORWARD_MSG_BASE_SIZE + 2;
 	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t innermsg_size = 2 + content_size;
 	size_t ohellomsg_size = PACKET_P2PHELLO_SIZE(innermsg_size);
@@ -899,12 +899,12 @@ send_ohello_message(union packet_state *state, union packet_state *p2pstate,
 	size_t padded_innermsg_size = padded_ohellomsg_size - PACKET_P2PHELLO_SIZE(0);
 	size_t ohellopacket_size = PACKET_BUF_SIZE(padded_ohellomsg_size);
 	size_t innerpacket_size = PACKET_BUF_SIZE(padded_innermsg_size);
-	size_t fwdmsg_size = MSG_FORWARD_MSG_SIZE(2 + ohellopacket_size);
+	size_t fwdmsg_size = CHAT_FORWARD_MSG_SIZE(2 + ohellopacket_size);
 	size_t padded_fwdmsg_size = padme_enc(fwdmsg_size);
 	size_t fwdmsg_padding = padded_fwdmsg_size - fwdmsg_size;
 
-	if (persist_store8(PROTO_MSG,              &text, &text_size)) goto fail;
-	if (persist_store8(MSG_FORWARD_MSG,        &text, &text_size)) goto fail;
+	if (persist_store8(PROTO_CHAT,             &text, &text_size)) goto fail;
+	if (persist_store8(CHAT_FORWARD_MSG,       &text, &text_size)) goto fail;
 	if (persist_store16_le(fwdmsg_size,        &text, &text_size)) goto fail;
 	if (persist_storebytes(recipient_isk, 32,  &text, &text_size)) goto fail;
 	if (persist_store8(1/*msg count*/,         &text, &text_size)) goto fail;
@@ -935,18 +935,18 @@ send_omsg_message(union packet_state *state, union packet_state *p2pstate,
 		const uint8_t *content, size_t content_size)
 {
 	uint8_t *text = PACKET_TEXT(buf);
-	uint8_t *omsg = text + MSG_FORWARD_MSG_BASE_SIZE + 2;
+	uint8_t *omsg = text + CHAT_FORWARD_MSG_BASE_SIZE + 2;
 	size_t text_size = PACKET_TEXT_SIZE(bufsz);
 	size_t innermsg_size = 2 + content_size;
 	size_t padded_innermsg_size = padme_enc(innermsg_size);
 	size_t innermsg_padding = padded_innermsg_size - innermsg_size;
 	size_t innerpacket_size = PACKET_BUF_SIZE(padded_innermsg_size);
-	size_t fwdmsg_size = MSG_FORWARD_MSG_SIZE(2 + innerpacket_size);
+	size_t fwdmsg_size = CHAT_FORWARD_MSG_SIZE(2 + innerpacket_size);
 	size_t padded_fwdmsg_size = padme_enc(fwdmsg_size);
 	size_t fwdmsg_padding = padded_fwdmsg_size - fwdmsg_size;
 
-	if (persist_store8(PROTO_MSG,             &text, &text_size)) goto fail;
-	if (persist_store8(MSG_FORWARD_MSG,       &text, &text_size)) goto fail;
+	if (persist_store8(PROTO_CHAT,            &text, &text_size)) goto fail;
+	if (persist_store8(CHAT_FORWARD_MSG,      &text, &text_size)) goto fail;
 	if (persist_store16_le(fwdmsg_size,       &text, &text_size)) goto fail;
 	if (persist_storebytes(recipient_isk, 32, &text, &text_size)) goto fail;
 	if (persist_store8(1/*msg count*/,        &text, &text_size)) goto fail;

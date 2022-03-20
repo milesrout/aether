@@ -14,11 +14,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-extern int fcntl_nonblock(int fd);
-extern const char *safe_read(size_t *nread, int fd, uint8_t *buf, size_t size);
-extern const char *safe_recvfrom(size_t *nread, int fd, uint8_t *buf, size_t size,
-	struct sockaddr *peeraddr, socklen_t *peeraddr_len);
-extern const char *safe_write(int fd, const uint8_t *buf, size_t size);
-extern const char *safe_sendto(int fd, const uint8_t *buf, size_t size,
-	struct sockaddr *peeraddr, socklen_t peeraddr_len);
-extern int setclientup(const char *addr, const char *port);
+#define PROTO_MSG ((uint8_t)4)
+#define MSG_ACK   ((uint8_t)1)
+#define MSG_NACK  ((uint8_t)2)
+#define MSG_UNACK ((uint8_t)3)

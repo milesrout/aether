@@ -45,7 +45,7 @@
 #include "msg.h"
 #include "peertable.h"
 #include "ident.h"
-#include "messaging.h"
+#include "chat.h"
 #include "io.h"
 #include "main.h"
 #include "timer.h"
@@ -224,7 +224,7 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 
 	if (text[0] == '/') {
 		if (strcmp((const char *)text, "/quit") == 0) {
-			ssize = msg_goodbye_init(PACKET_TEXT(buf),
+			ssize = chat_goodbye_init(PACKET_TEXT(buf),
 				PACKET_TEXT_SIZE(bufsz), NULL);
 			if (ssize == -1)
 				errx(1, "Failed to create GOODBYE");
@@ -255,7 +255,7 @@ handle_input(union packet_state *state, struct p2pstate **p2ptable,
 static
 int
 try_unlock_raw_message(union packet_state *p2pstate,
-		struct msg_fetch_content_msg *content,
+		struct chat_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
 	if (!packet_unlock(p2pstate, content->text, load16_le(content->len))) {
@@ -272,7 +272,7 @@ try_unlock_raw_message(union packet_state *p2pstate,
 static
 int
 try_unlock_prefixed_message(union packet_state *p2pstate,
-		struct msg_fetch_content_msg *content,
+		struct chat_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
 	if (!packet_unlock(p2pstate,
@@ -291,7 +291,7 @@ try_unlock_prefixed_message(union packet_state *p2pstate,
 static
 int
 try_unlock_hshake_message(struct ident_state *ident, union packet_state *p2pstate,
-		struct msg_fetch_content_msg *content,
+		struct chat_fetch_content_msg *content,
 		const char **text, size_t *text_size)
 {
 	struct hshake_ohello_msg *hmsg = (struct hshake_ohello_msg *)content->text;
@@ -368,15 +368,15 @@ int
 handle_message(struct ident_state *ident, union packet_state *state,
 		struct p2pstate **p2ptable, int fd, uint8_t *buf)
 {
-	struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)PACKET_TEXT(buf);
+	struct chat_fetch_reply_msg *msg = (struct chat_fetch_reply_msg *)PACKET_TEXT(buf);
 	size_t len = load16_le(msg->msg.len);
-	size_t total_size = MSG_FETCH_REP_BASE_SIZE;
+	size_t total_size = CHAT_FETCH_REP_BASE_SIZE;
 	uint8_t *message = msg->messages;
 	int i, result = -1;
 
-	if (len < MSG_FETCH_REP_BASE_SIZE)
+	if (len < CHAT_FETCH_REP_BASE_SIZE)
 		errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
-			load16_le(msg->msg.len), MSG_FETCH_REP_BASE_SIZE);
+			load16_le(msg->msg.len), CHAT_FETCH_REP_BASE_SIZE);
 
 	if (msg->message_count > 1)
 		errg(fail, "Message fetch replies with more than one message not yet supported (%d)",
@@ -385,24 +385,24 @@ handle_message(struct ident_state *ident, union packet_state *state,
 	if (msg->message_count == 0)
 		return 0;
 
-	if (len < MSG_FETCH_REP_SIZE(34))
+	if (len < CHAT_FETCH_REP_SIZE(34))
 		errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
-			load16_le(msg->msg.len), MSG_FETCH_REP_SIZE(34));
+			load16_le(msg->msg.len), CHAT_FETCH_REP_SIZE(34));
 
 	for (i = 0; i < msg->message_count; i++) {
-		struct msg_fetch_content_msg *content = (struct msg_fetch_content_msg *)message;
+		struct chat_fetch_content_msg *content = (struct chat_fetch_content_msg *)message;
 		struct key key;
 		struct p2pstate *p2pstate;
 		const char *text;
 		size_t text_size;
 
-		if (len < total_size + MSG_FETCH_CONTENT_BASE_SIZE)
+		if (len < total_size + CHAT_FETCH_CONTENT_BASE_SIZE)
 			errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
-				len, total_size + MSG_FETCH_CONTENT_BASE_SIZE);
+				len, total_size + CHAT_FETCH_CONTENT_BASE_SIZE);
 
-		if (len < total_size + MSG_FETCH_CONTENT_SIZE(load16_le(content->len)))
+		if (len < total_size + CHAT_FETCH_CONTENT_SIZE(load16_le(content->len)))
 			errg(fail, "Message fetch reply message (%lu) is too small (%lu)",
-				len, total_size + MSG_FETCH_CONTENT_SIZE(load16_le(content->len)));
+				len, total_size + CHAT_FETCH_CONTENT_SIZE(load16_le(content->len)));
 
 		memcpy(key.data, content->isk, 32);
 		p2pstate = stbds_hmgetp_null(*p2ptable, key);
@@ -430,8 +430,8 @@ handle_message(struct ident_state *ident, union packet_state *state,
 
 	done:
 		fprintf(stderr, "<%s> %.*s\n", p2pstate->username, (int)text_size, text);
-		total_size += MSG_FETCH_CONTENT_SIZE(load16_le(content->len));
-		message += MSG_FETCH_CONTENT_SIZE(load16_le(content->len));
+		total_size += CHAT_FETCH_CONTENT_SIZE(load16_le(content->len));
+		message += CHAT_FETCH_CONTENT_SIZE(load16_le(content->len));
 	}
 
 	result = 0;
@@ -472,16 +472,16 @@ handle_packet(struct ident_state *ident, union packet_state *state,
 				PACKET_TEXT_SIZE(nread), load16_le(msg->len));
 
 		switch (msg->proto) {
-		case PROTO_MSG:
+		case PROTO_CHAT:
 			switch (msg->type) {
-			case MSG_IMMEDIATE:
-			case MSG_FETCH_REP:
+			case CHAT_IMMEDIATE:
+			case CHAT_FETCH_REP:
 				if (handle_message(ident, state, p2ptable, fd, buf))
 					goto loop_fail;
 				goto loop_continue;
-			case MSG_FORWARD_ACK:
+			case CHAT_FORWARD_ACK:
 				goto loop_continue;
-			case MSG_GOODBYE_ACK:
+			case CHAT_GOODBYE_ACK:
 				goto loop_quit;
 			default:
 				goto loop_invalid;
@@ -540,7 +540,7 @@ fetch_thread(long fd_long, void *ctx_void)
 		if (n == -1)
 			warn("Could not read timer expirations");
 
-		size = msg_fetch_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz));
+		size = chat_fetch_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz));
 		if (size == -1)
 			err(1, "Could not create FETCH message");
 		packet_lock(ctx->state, buf, size);
@@ -675,7 +675,7 @@ bob(char **argv, int subopt)
 	while ((option = optparse(&options, "h:p:")) != -1) switch (option) {
 		case 'h': host = options.optarg; break;
 		case 'p': port = options.optarg; break;
-		default: usage(options.errmsg, 1); break;
+		default:  usage(options.errmsg, 1); break;
 	}
 
 

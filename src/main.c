@@ -49,7 +49,7 @@
 #include "msg.h"
 #include "peertable.h"
 #include "ident.h"
-#include "messaging.h"
+#include "chat.h"
 #include "io.h"
 #include "main.h"
 #include "fibre.h"
@@ -188,7 +188,7 @@ send_packet_to(struct peer *peer, int fd, uint8_t *buf, size_t size)
 
 	packet_lock(&peer->state.ps, buf, size);
 	error = safe_sendto(fd, buf, PACKET_BUF_SIZE(size),
-		sstosa(&peer->addr), peer->addr_len);
+		(struct sockaddr *)&peer->addr, peer->addr_len);
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
 	printf("-> %zu\t%s:%s\t%d/%d\t%s/%s\n", PACKET_BUF_SIZE(size),
@@ -424,7 +424,7 @@ handle_unknown(struct handler_ctx *hctx, struct qmsg *qmsg)
 
 	(void)ctx;
 
-	size = msg_nack_init(text, text_size);
+	size = chat_nack_init(text, text_size);
 	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 
@@ -441,7 +441,7 @@ handle_goodbye(struct handler_ctx *hctx, struct qmsg *qmsg)
 	struct userkv *kv;
 	struct key isk;
 
-	if (size < MSG_GOODBYE_MSG_SIZE)
+	if (size < CHAT_GOODBYE_MSG_SIZE)
 		goto reply;
 
 	packet_get_iskc(isk.data, &peer->state.ps);
@@ -453,7 +453,7 @@ handle_goodbye(struct handler_ctx *hctx, struct qmsg *qmsg)
 	kv->value.peer = NULL;
 
 reply:
-	size = msg_goodbye_ack_init(text, text_size, NULL);
+	size = chat_goodbye_ack_init(text, text_size, NULL);
 	error = send_packet_to(peer, ctx->fd, qmsg->buf, size);
 	free(peer);
 	return error ? error : "goodbye";
@@ -476,7 +476,7 @@ handle_fetch(struct handler_ctx *hctx, struct qmsg *qmsg)
 	struct stored_message smsg;
 	size_t totalmsglength;
 
-	if (size < MSG_FETCH_MSG_SIZE)
+	if (size < CHAT_FETCH_MSG_SIZE)
 		goto reply;
 
 	packet_get_iskc(isk.data, &peer->state.ps);
@@ -497,13 +497,13 @@ handle_fetch(struct handler_ctx *hctx, struct qmsg *qmsg)
 
 reply:
 	totalmsglength = msgcount == 0 ? 0 : smsg.size + 34;
-	size = msg_fetch_rep_init(text, text_size, msgcount, totalmsglength);
+	size = chat_fetch_rep_init(text, text_size, msgcount, totalmsglength);
 
 	{
-		struct msg_fetch_reply_msg *msg = (struct msg_fetch_reply_msg *)text;
+		struct chat_fetch_reply_msg *msg = (struct chat_fetch_reply_msg *)text;
 
 		if (msgcount == 1) {
-			struct msg_fetch_content_msg *innermsg = (struct msg_fetch_content_msg *)msg->messages;
+			struct chat_fetch_content_msg *innermsg = (struct chat_fetch_content_msg *)msg->messages;
 			store16_le(innermsg->len, smsg.size);
 			memcpy(innermsg->isk,  smsg.isk,  32);
 			memcpy(innermsg->text, smsg.data, smsg.size);
@@ -522,9 +522,9 @@ handle_forward(struct handler_ctx *hctx, struct qmsg *qmsg)
 	size_t size = PACKET_TEXT_SIZE(qmsg->size);
 	struct peer *peer = hctx->peer;
 	struct server_ctx *ctx = hctx->ctx;
-	struct msg_forward_msg *msg = (struct msg_forward_msg *)text;
-	struct msg_fetch_reply_msg *repmsg;
-	struct msg_fetch_content_msg *innermsg;
+	struct chat_forward_msg *msg = (struct chat_forward_msg *)text;
+	struct chat_fetch_reply_msg *repmsg;
+	struct chat_fetch_content_msg *innermsg;
 	struct userkv *kv;
 	struct stored_message smsg;
 	struct key isk;
@@ -533,17 +533,17 @@ handle_forward(struct handler_ctx *hctx, struct qmsg *qmsg)
 	size_t repsize, totalmsglength;
 	const char *error;
 
-	if (size < MSG_FORWARD_MSG_BASE_SIZE)
+	if (size < CHAT_FORWARD_MSG_BASE_SIZE)
 		goto reply;
 
 	if (msg->message_count != 1)
 		goto reply;
 
-	if (size < MSG_FORWARD_MSG_BASE_SIZE + 2)
+	if (size < CHAT_FORWARD_MSG_BASE_SIZE + 2)
 		goto reply;
 
 	message_size = load16_le(msg->messages);
-	if (size < MSG_FORWARD_MSG_SIZE(2 + message_size))
+	if (size < CHAT_FORWARD_MSG_SIZE(2 + message_size))
 		goto reply;
 
 	memcpy(isk.data, msg->isk, 32);
@@ -552,14 +552,14 @@ handle_forward(struct handler_ctx *hctx, struct qmsg *qmsg)
 
 	result = 0;
 	if (kv->value.peer != NULL) {
-		repmsg = (struct msg_fetch_reply_msg *)text;
-		innermsg = (struct msg_fetch_content_msg *)repmsg->messages;
+		repmsg = (struct chat_fetch_reply_msg *)text;
+		innermsg = (struct chat_fetch_content_msg *)repmsg->messages;
 
 		memmove(innermsg->text, msg->messages + 2, message_size);
 
 		totalmsglength = message_size + 34;
-		repsize = msg_fetch_rep_init(text, text_size, 1, totalmsglength);
-		repmsg->msg.type = MSG_IMMEDIATE;
+		repsize = chat_fetch_rep_init(text, text_size, 1, totalmsglength);
+		repmsg->msg.type = CHAT_IMMEDIATE;
 
 		store16_le(innermsg->len, message_size);
 		packet_get_iskc(innermsg->isk, &peer->state.ps);
@@ -582,7 +582,7 @@ handle_forward(struct handler_ctx *hctx, struct qmsg *qmsg)
 	stbds_arrpush(kv->value.letterbox, smsg);
 
 reply:
-	repsize = msg_forward_ack_init(text, text_size, result);
+	repsize = chat_forward_ack_init(text, text_size, result);
 	return send_packet_to(peer, ctx->fd, qmsg->buf, repsize);
 }
 
@@ -674,7 +674,7 @@ handle_hshakes(long unused, void *hctx_void)
 
 			packet_hshake_dreply(&hmsg->peer->state.ps, hmsg->qmsg->buf);
 			error = safe_sendto(ctx->fd, qmsg->buf, PACKET_REPLY_SIZE,
-				sstosa(&peer->addr),
+				(struct sockaddr *)&peer->addr,
 				peer->addr_len);
 			crypto_wipe(qmsg->buf, PACKET_REPLY_SIZE);
 			STAILQ_INSERT_HEAD(&hctx->ctx->spares, qmsg, q);
@@ -744,14 +744,34 @@ handle_packet(struct server_ctx *sctx, struct peer *peer, struct qmsg *qmsg)
 			default:
 				goto error;
 			}
+		case PROTO_CHAT:
+			switch (msg->type) {
+			case CHAT_GOODBYE_MSG:
+				return handle_goodbye(&ctx, qmsg);
+			case CHAT_FETCH_MSG:
+				return handle_fetch(&ctx, qmsg);
+			case CHAT_FORWARD_MSG: 
+				return handle_forward(&ctx, qmsg);
+			default:
+				goto error;
+			}
 		case PROTO_MSG:
 			switch (msg->type) {
-			case MSG_GOODBYE_MSG:
-				return handle_goodbye(&ctx, qmsg);
-			case MSG_FETCH_MSG:
-				return handle_fetch(&ctx, qmsg);
-			case MSG_FORWARD_MSG: 
-				return handle_forward(&ctx, qmsg);
+			case MSG_ACK:
+				/* record_as_acked(); */
+				return NULL;
+			case MSG_NACK:
+				/* if (we_still_have_it) */
+				/* 	send_it(); */
+				/* else */
+				/* 	dunno(); */
+				return NULL;
+			case MSG_UNACK:
+				/* if (we_have_received_it) */
+				/* 	send_ack(); */
+				/* else */
+				/* 	send_nack(); */
+				return NULL;
 			default:
 				goto error;
 			}
@@ -845,15 +865,14 @@ handle_datagram(int fd, struct hshake_ctx *hctx)
 
 	pi.addr_len = sizeof(pi.addr);
 	error = safe_recvfrom(&qmsg->size, fd, qmsg->buf, BUFSZ,
-		sstosa(&pi.addr), &pi.addr_len);
+		(struct sockaddr *)&pi.addr, &pi.addr_len);
 	if (error) return error;
 
 
-	peer = peer_getbyaddr(&hctx->ctx->peertable, sstosa(&pi.addr), pi.addr_len);
-	if (peer == NULL) {
-		qmsg = realloc(qmsg, 1 + sizeof *qmsg);
+	peer = peer_getbyaddr(&hctx->ctx->peertable,
+		(struct sockaddr *)&pi.addr, pi.addr_len);
+	if (peer == NULL)
 		return enqueue_hshake(hctx, &pi, qmsg);
-	}
 
 	if (qmsg->size > PACKET_BUF_SIZE(0))
 		return enqueue_packet(peer, qmsg);
@@ -906,19 +925,6 @@ user_input(struct server_ctx *ctx)
 end:
 	if (buf) free(buf);
 	return error;
-}
-
-static
-const char *
-handler(int fd, struct hshake_ctx *hctx)
-{
-	const char *err;
-
-	for (;;) {
-		fibre_awaitfd(fd, EPOLLIN);
-		err = handle_datagram(fd, hctx);
-		if (err) return err;
-	}
 }
 
 static
@@ -987,7 +993,12 @@ handler_thread(long fd, void *ctx_void)
 	struct hshake_ctx *hctx = ctx_void;
 	const char *error;
 
-	error = handler(fd, hctx);
+	for (;;) {
+		fibre_awaitfd(fd, EPOLLIN);
+		error = handle_datagram(fd, hctx);
+		if (error) break;
+	}
+
 	if (error) {
 		fflush(stdout);
 		errx(1, "handler_thread: %s", error);
