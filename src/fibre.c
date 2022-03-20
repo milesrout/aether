@@ -41,6 +41,11 @@
 
 #include "fibre_switch.h"
 
+#ifdef BUILD_SANITISE
+void __sanitizer_start_switch_fiber(void **, const void *, size_t);
+void __sanitizer_finish_switch_fiber(void *, const void **, size_t *);
+#endif
+
 static void *mmap_allocate(size_t m);
 static void  mmap_deallocate(void *p, size_t n);
 
@@ -363,6 +368,7 @@ fibre_init(size_t stack_size)
 	int epfd;
 	struct epoll_event ev;
 
+#ifndef NDEBUG
 	warnx("Initialising fibre system with %luKiB-sized stacks",
 		stack_size / 1024);
 
@@ -379,6 +385,9 @@ fibre_init(size_t stack_size)
 			BLOCK_SIZE);
 #undef BLOCK_SIZE
 #undef NODE_SIZE
+#else
+	(void)page_size;
+#endif /* NDEBUG */
 
 	global_fibre_store.fs_stack_size = stack_size;
 	SLIST_INIT(&global_fibre_store.fs_blocks);
@@ -656,7 +665,16 @@ fibre_yield_impl(int fd, int events)
 	/* fprintf(stderr, "Yielding from fibre %d to fibre %d.\n", */
 	/* 	   old_fibre->f_id, */
 	/* 	   current_fibre->f_id); */
+#ifdef BUILD_SANITISE
+	__sanitizer_start_switch_fiber(NULL, current_fibre->f_stack, global_fibre_store.fs_stack_size);
+#endif
 	fibre_switch(old, new);
+#ifdef BUILD_SANITISE
+	__sanitizer_finish_switch_fiber(NULL, NULL, NULL);
+#endif
+	/* fprintf(stderr, "Yielded from fibre %d to fibre %d.\n", */
+	/* 	   old_fibre->f_id, */
+	/* 	   current_fibre->f_id); */
 	return 1;
 }
 
@@ -701,6 +719,9 @@ static
 void
 fibre_call(void)
 {
+#ifdef BUILD_SANITISE
+	__sanitizer_finish_switch_fiber(NULL, NULL, NULL);
+#endif
 	current_fibre->f_func(current_fibre->f_datan, current_fibre->f_datap);
 }
 
