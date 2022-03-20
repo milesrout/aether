@@ -16,10 +16,6 @@
 
 #include "proto-chat.h"
 
-struct chat_nack_msg {
-	struct msg msg;
-};
-#define CHAT_NACK_SIZE (sizeof(struct chat_nack_msg))
 struct chat_forward_msg {
 	struct msg msg;
 	uint8_t isk[32];
@@ -61,7 +57,6 @@ struct chat_fetch_content_msg {
 };
 #define CHAT_FETCH_CONTENT_BASE_SIZE (sizeof(struct chat_fetch_content_msg))
 #define CHAT_FETCH_CONTENT_SIZE(n) (CHAT_FETCH_CONTENT_BASE_SIZE + (n))
-extern ssize_t chat_nack_init(uint8_t *text, size_t size);
 extern ssize_t chat_forward_ack_init(uint8_t *text, size_t size, uint8_t result);
 extern ssize_t chat_fetch_rep_init(uint8_t *text, size_t size, uint8_t message_count, size_t totalchatlength);
 extern ssize_t chat_fetch_init(uint8_t *text, size_t size);

@@ -424,7 +424,7 @@ handle_unknown(struct handler_ctx *hctx, struct qmsg *qmsg)
 
 	(void)ctx;
 
-	size = chat_nack_init(text, text_size);
+	size = msg_nack_init(text, text_size);
 	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
 

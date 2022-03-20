@@ -58,7 +58,6 @@ msg_type(uint8_t proto, uint8_t type)
 		}
 	} else if (proto == PROTO_CHAT) {
 		switch (type) {
-			case CHAT_NACK:        return "NACK";
 			case CHAT_FORWARD_MSG: return "FORWARD";
 			case CHAT_FORWARD_ACK: return "FORWARD_ACK";
 			case CHAT_FETCH_MSG:   return "FETCH";

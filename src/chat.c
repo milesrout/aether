@@ -30,25 +30,6 @@
 #include "util.h"
 
 ssize_t
-chat_nack_init(uint8_t *text, size_t size)
-{
-	size_t text_size = PACKET_TEXT_SIZE(size);
-	size_t padded_size, padding;
-
-	padded_size = padme_enc(CHAT_NACK_SIZE);
-	padding = padded_size - CHAT_NACK_SIZE;
-
-	if (persist_store8(PROTO_CHAT,         &text, &text_size)) goto fail;
-	if (persist_store8(CHAT_NACK,          &text, &text_size)) goto fail;
-	if (persist_store16_le(CHAT_NACK_SIZE, &text, &text_size)) goto fail;
-	if (persist_zeropad(padding,           &text, &text_size)) goto fail;
-
-	return padded_size;
-fail:
-	return -1;
-}
-
-ssize_t
 chat_fetch_init(uint8_t *text, size_t size)
 {
 	size_t text_size = PACKET_TEXT_SIZE(size);
