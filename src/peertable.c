@@ -57,9 +57,8 @@ peertable_init(struct peertable *pt)
 void
 peertable_finish(struct peertable *pt)
 {
-	if (pt->table) {
+	if (pt->table)
 		free(pt->table);
-	}
 }
 
 static
@@ -211,11 +210,10 @@ peer_getnameinfo(struct peer *p)
 		p->host, NI_MAXHOST,
 		p->service, NI_MAXSERV,
 		NI_NUMERICHOST|NI_NUMERICSERV);
-	if (gai == EAI_SYSTEM) {
+	if (gai == EAI_SYSTEM)
 		warn("getnameinfo: %s", gai_strerror(gai));
-	} else if (gai) {
+	else if (gai)
 		warnx("getnameinfo: %s", gai_strerror(gai));
-	}
 
 	return gai != 0 ? -1 : 0;
 }
