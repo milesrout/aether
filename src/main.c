@@ -72,11 +72,6 @@ extern char *__progname;
  * secret key: exclusively refers to _symmetric_ secret keys.
  */
 
-/* the following functions are "safe" in the sense that instead of returning an
- * error, they abort the program.  They are not safe in the sense that they
- * cannot produce errors or in the sense that they can be used with impunity.
- */
-
 struct stored_message {
 	uint8_t  isk[32];
 	uint16_t size;
