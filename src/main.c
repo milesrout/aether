@@ -679,7 +679,7 @@ handle_hshakes(long unused, void *hctx_void)
 			peer->status = PEER_ACTIVE;
 			printf("-> %zu\t%s:%s\t\tHSHAKE/REPLY\n",
 				PACKET_REPLY_SIZE, peer->host, peer->service);
-			
+
 			packet_get_iskc(isk.data, &peer->state.ps);
 			if (kv = stbds_hmgetp_null(ctx->table, isk)) {
 				kv->value.peer = peer;
