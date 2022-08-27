@@ -5,3 +5,4 @@ tags
 massif.out.*
 callgrind.out.*
 cachegrind.out.*
+Session.vim*

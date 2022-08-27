@@ -21,9 +21,14 @@ endif
 
 ifneq ($(BUILD),release)
 ifneq ($(BUILD),musl)
-	CFLAGS += -Werror
+	#CFLAGS += -Werror
 endif
 endif
+
+V := 0
+AT_0 := @
+AT_1 :=
+AT := $(AT_$(V))
 
 CFLAGS    += -DBUILD_$(shell echo '$(BUILD)' | tr '[:lower:]' '[:upper:]')
 
@@ -40,7 +45,7 @@ DEPS      := $(OBJS:%.o=%.d)
 INCS      := -iquote./include
 
 WARNINGS  += -pedantic -pedantic-errors -Wno-overlength-strings
-WARNINGS  += -fmax-errors=2 -Wall -Wextra -Wdouble-promotion -Wformat=2
+WARNINGS  += -fmax-errors=20 -Wall -Wextra -Wdouble-promotion -Wformat=2
 WARNINGS  += -Wformat-signedness -Wvla -Wformat-truncation=2 -Wformat-overflow=2
 WARNINGS  += -Wnull-dereference -Winit-self -Wuninitialized
 WARNINGS  += -Wimplicit-fallthrough=4 -Wstack-protector -Wmissing-include-dirs
@@ -69,37 +74,37 @@ VALGRIND_FLAGS += -s --show-leak-kinds=all --leak-check=full --track-origins=yes
 
 .PHONY: $(TARGET)
 $(TARGET): build/$(BUILD)/$(TARGET)
-	@echo '  SYMLINK ' $(TARGET) "->" build/$(BUILD)/$(TARGET)
-	@ln -sf build/$(BUILD)/$(TARGET) $(TARGET)
+	$(AT)echo '  SYMLINK ' $(TARGET) "->" build/$(BUILD)/$(TARGET)
+	$(AT)ln -sf build/$(BUILD)/$(TARGET) $(TARGET)
 
 build/$(BUILD)/$(TARGET): $(OBJS)
-	@echo '  LD      ' $@
-	@$(CC) $(OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
+	$(AT)echo '  LD      ' $@
+	$(AT)$(CC) $(OBJS) -o $@ $(LDFLAGS) $(LDLIBS)
 
 build/$(BUILD)/src/monocypher.c.o: src/monocypher.c
-	@mkdir -p $(dir $@)
-	@echo '  CC      ' $<.o
-	@$(CC) -c $(CFLAGSNW) $< -o $@
+	$(AT)mkdir -p $(dir $@)
+	$(AT)echo '  CC      ' $<.o
+	$(AT)$(CC) -c $(CFLAGSNW) $< -o $@
 
 build/$(BUILD)/src/stb_ds.c.o: src/stb_ds.c
-	@mkdir -p $(dir $@)
-	@echo '  CC      ' $<.o
-	@$(CC) -c $(CFLAGSNW) $< -o $@
+	$(AT)mkdir -p $(dir $@)
+	$(AT)echo '  CC      ' $<.o
+	$(AT)$(CC) -c $(CFLAGSNW) $< -o $@
 
 build/$(BUILD)/src/optparse.c.o: src/optparse.c
-	@mkdir -p $(dir $@)
-	@echo '  CC      ' $<.o
-	@$(CC) -c $(CFLAGSNW) $< -o $@
+	$(AT)mkdir -p $(dir $@)
+	$(AT)echo '  CC      ' $<.o
+	$(AT)$(CC) -c $(CFLAGSNW) $< -o $@
 
 build/$(BUILD)/%.c.o: %.c
-	@mkdir -p $(dir $@)
-	@echo '  CC      ' $<.o
-	@$(CC) -c $(CFLAGS) $< -o $@
+	$(AT)mkdir -p $(dir $@)
+	$(AT)echo '  CC      ' $<.o
+	$(AT)$(CC) -c $(CFLAGS) $< -o $@
 
 build/$(BUILD)/%.S.o: %.S
-	@mkdir -p $(dir $@)
-	@echo '  AS      ' $<.o
-	@$(AS) $(ASFLAGS) $< -o $@
+	$(AT)mkdir -p $(dir $@)
+	$(AT)echo '  AS      ' $<.o
+	$(AT)$(AS) $(ASFLAGS) $< -o $@
 
 tags: $(SRCS)
 	gcc -M $(INCS) $(SRCS) | sed -e 's/[\ ]/\n/g' | \
