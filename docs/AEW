@@ -21,8 +21,8 @@ in detail in its own document.
 Federation means that AEW does not rely on a single server or server operator
 but a network of servers operated by different parties that are not required to
 trust each other.  However, federation does not mean that AEW is a peer-to-peer
-protocol like BitTorrent. It is still a client-server protocol, in which client
-identity is tied to their "home" server.
+protocol like BitTorrent. It is still a client-server protocol, in which each
+client's identity is tied to his "home" server.
 
 End-to-end encryption (E2EE) in the case of AEW means that if Alice
 <example.net:~alice> sends Bob <example.org:~bob> a message, and Bob receives
@@ -101,7 +101,7 @@ Equivalent elsewhere: an IRC channel
 
 Group rooms:  A group room is a room whose owner is a group.  A room owned by a
 group is special because it is namespaced differently, its existence is only
-visible to the members of that group, every member of that group is
+visible to the members of that group, every owner of that group is
 automatically a member of the room, and the room is controlled by the group's
 admins.  Note that group non-members may be invited to the room as well.
 
