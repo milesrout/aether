@@ -332,6 +332,7 @@ skip_message_keys_helper(struct packet_ratchet_state_common *ra, uint32_t until)
 		return -1;
 
 	memcpy(bucket->hk, ra->hkr, 32);
+	SLIST_INIT(&bucket->bucket);
 	SLIST_INSERT_HEAD(&ra->skipped, bucket, buckets);
 
 	while (ra->nr < until) {

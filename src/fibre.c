@@ -47,7 +47,12 @@ void __sanitizer_finish_switch_fiber(void *, const void **, size_t *);
 #endif
 
 static void *mmap_allocate(size_t m);
-static void  mmap_deallocate(void *p, size_t n);
+static void mmap_deallocate(void *p, size_t n);
+
+struct fibre_store_list;
+static
+void
+fibre_store_list_enqueue(struct fibre_store_list *list, int fibre);
 
 static struct {
 	long int fstat_stack_allocs;
@@ -102,28 +107,20 @@ enum fibre_list {
  * to and how to switch to it.
  */
 struct fibre {
-	struct fibre_ctx f_ctx;
-	short f_state;
-	short f_prio;
-	int f_flags;
+	struct   fibre_ctx f_ctx;
+	short    f_state;
+	short    f_prio;
+	int      f_flags;
 	unsigned f_valgrind_id;
-	int f_id;
-	int f_fd;
-	long f_datan;
-	char *f_stack;
-	void (*f_func)(long, void *);
-	void *f_datap;
+	int      f_id;
+	int      f_fd;
+	int      f_fdcount;
+	int     *f_fds;
+	char    *f_stack;
+	void   (*f_func)(long, void *);
+	void    *f_datap;
+	long     f_datan;
 };
-
-static
-void
-fibre_setup(struct fibre *fibre)
-{
-	fibre->f_state = FS_EMPTY;
-	fibre->f_flags = 0;
-	fibre->f_fd = -1;
-	fibre->f_stack = NULL;
-}
 
 /*
  * This is a node in an intrusive bidirectional linked list of struct fibres.
@@ -132,6 +129,22 @@ struct fibre_store_node {
 	TAILQ_ENTRY(fibre_store_node) fsn_nodes;
 	struct fibre fsn_fibre;
 };
+
+static struct fibre_store_node fibres[4096];
+static TAILQ_HEAD(global_empty_nodes, fibre_store_node) global_empty_nodes;
+static int next_invalid_fibre;
+
+static
+void
+fibre_setup(int fibre)
+{
+	fibres[fibre].fsn_fibre.f_state = FS_EMPTY;
+	fibres[fibre].fsn_fibre.f_flags = 0;
+	fibres[fibre].fsn_fibre.f_fdcount = 0;
+	fibres[fibre].fsn_fibre.f_fds = NULL;
+	fibres[fibre].fsn_fibre.f_fd = -1;
+	fibres[fibre].fsn_fibre.f_stack = NULL;
+}
 
 /*
  * This is the control block for a linked list of struct fibres.
@@ -152,47 +165,20 @@ fibre_store_list_init(struct fibre_store_list *list)
 }
 
 /* adds a fibre to the start of the list */
+/*
 static
 void
-fibre_store_list_enqueue(struct fibre_store_list *list, struct fibre *fibre)
+fibre_store_list_enqueue(struct fibre_store_list *list, int fibre)
 {
-	struct fibre_store_node *node =
-		container_of(struct fibre_store_node, fsn_fibre, fibre);
+	int L = list - global_fibre_store.fs_lists;
+	fprintf(stderr, "fibre_store_list_enqueue(list=%p, fibre=%d)\n",
+		(void*)list, fibre);
 
+	struct fibre_store_node *node = fibres + fibre;
 	TAILQ_INSERT_HEAD(&list->fsl_nodes, node, fsn_nodes);
 	list->fsl_count++;
 }
-
-/* removes a fibre from the end of the list */
-static
-struct fibre *
-try_fibre_store_list_dequeue(struct fibre_store_list *list)
-{
-	struct fibre_store_node *node;
-
-	if (TAILQ_EMPTY(&list->fsl_nodes))
-		return NULL;
-
-	node = TAILQ_LAST(&list->fsl_nodes, fsl_nodes);
-	TAILQ_REMOVE(&list->fsl_nodes, node, fsn_nodes);
-	list->fsl_count--;
-	return &node->fsn_fibre;
-}
-
-/*
- * This value is calculated so that each fibre_store_block should be 4xpage-sized.
- * e.g. if sizeof(fibre_store_node) is 160 bytes, this value should be 25.
- */
-#define FIBRE_STORE_NODES_PER_BLOCK 136
-
-/*
- * struct fibres are allocated in page-sized blocks, which at the moment are
- * never deallocated, but the struct fibres within them can be reused.
- */
-struct fibre_store_block {
-	SLIST_ENTRY(fibre_store_block) fsb_blocks;
-	struct fibre_store_node fsb_nodes[FIBRE_STORE_NODES_PER_BLOCK];
-};
+*/
 
 /*
  * there is a list of ready fibres for each priority level plus a list of
@@ -200,47 +186,53 @@ struct fibre_store_block {
  */
 struct fibre_store {
 	size_t fs_stack_size;
-	SLIST_HEAD(fs_blocks, fibre_store_block) fs_blocks;
-	/* struct fibre_store_block *fs_blocks; */
-	/* the last list is for FS_EMPTY fibres */
 	struct fibre_store_list fs_lists[FL_NUM_LISTS];
 	int fs_epfd;
 };
 
 static
-void
-fibre_store_block_create(struct fibre_store_list *list, struct fibre_store *store)
+struct fibre_store
+global_fibre_store;
+
+/* Removes a fibre from the end of the list */
+static
+int
+try_fibre_store_list_dequeue_ready(int prio)
 {
-	struct fibre_store_block *block =
-		mmap_allocate(sizeof *block);
-	ptrdiff_t i;
+	struct fibre_store_list *list = &global_fibre_store.fs_lists[prio];
+	struct fibre_store_node *node;
 
-	for (i = 0; i < FIBRE_STORE_NODES_PER_BLOCK; i++) {
-		TAILQ_INSERT_TAIL(&list->fsl_nodes, block->fsb_nodes + i, fsn_nodes);
-		fibre_setup(&block->fsb_nodes[i].fsn_fibre);
-	}
+	/* fprintf(stderr, "try_fibre_store_list_dequeue_ready(prio=%d)\n", prio); */
 
-	SLIST_INSERT_HEAD(&store->fs_blocks, block, fsb_blocks);
+	if (TAILQ_EMPTY(&list->fsl_nodes))
+		return -1;
+
+	node = TAILQ_LAST(&list->fsl_nodes, fsl_nodes);
+	/* fprintf(stderr, "dequeued fibre %ld\n", node - fibres); */
+	TAILQ_REMOVE(&list->fsl_nodes, node, fsn_nodes);
+	list->fsl_count--;
+	return node - fibres;
 }
 
 /*
  * This takes fibres from the start of the list instead of the end, treating the
- * empties list as a stack. The other lists are treated as queues.
+ * empties list as a stack.  The other lists are treated as queues.
  */
 static
-struct fibre *
-fibre_store_get_first_empty(struct fibre_store *store)
+int
+fibre_store_get_first_empty(void)
 {
-	struct fibre_store_list *empties_list = &store->fs_lists[FL_EMPTY];
 	struct fibre_store_node *node;
 
-	if (TAILQ_EMPTY(&empties_list->fsl_nodes)) {
-		fibre_store_block_create(empties_list, store);
+	if (TAILQ_EMPTY(&global_empty_nodes)) {
+		int fibre = ++next_invalid_fibre;
+		fibre_setup(fibre);
+		return fibre;
 	}
 
-	node = TAILQ_FIRST(&empties_list->fsl_nodes);
-	TAILQ_REMOVE(&empties_list->fsl_nodes, node, fsn_nodes);
-	return &node->fsn_fibre;
+	node = TAILQ_FIRST(&global_empty_nodes);
+	TAILQ_REMOVE(&global_empty_nodes, node, fsn_nodes);
+	return node - fibres;
 }
 
 /*
@@ -252,6 +244,8 @@ transfer_node(struct fibre_store_node *node,
 		struct fibre_store_list *ready,
 		struct fibre_store_list *waiting)
 {
+	/* fprintf(stderr, "transfer_node()\n"); */
+
 	TAILQ_REMOVE(&waiting->fsl_nodes, node, fsn_nodes);
 	TAILQ_INSERT_TAIL(&ready->fsl_nodes, node, fsn_nodes);
 	waiting->fsl_count--;
@@ -261,15 +255,19 @@ transfer_node(struct fibre_store_node *node,
 
 static
 int
-fibre_store_poll(struct fibre_store_list *ready,
-		struct fibre_store_list *waiting)
+fibre_store_poll(int prio)
 {
-	struct epoll_event ev[8];
+	struct fibre_store_list *waiting
+		= &global_fibre_store.fs_lists[FL_HIGH_WAITING + prio];
+	struct fibre_store_list *ready = &global_fibre_store.fs_lists[prio];
+	struct epoll_event ev[8] = {0};
 	const char *opterrstring;
 	int sockerr, opterr;
 	struct fibre *f;
 	ptrdiff_t i;
 	int count;
+
+	/* fprintf(stderr, "fibre_store_poll(prio=%d)\n", prio); */
 
 	do count = epoll_wait(waiting->fsl_epfd, ev, 8, 0);
 	while (count == -1 && errno == EINTR);
@@ -277,23 +275,26 @@ fibre_store_poll(struct fibre_store_list *ready,
 		err(1, "epoll_wait");
 
 	for (i = 0; i < count; i++) {
-		f = &((struct fibre_store_node *)ev[i].data.ptr)->fsn_fibre;
+		/* f = &((struct fibre_store_node *)ev[i].data.ptr)->fsn_fibre; */
+		f = &fibres[ev[i].data.u32].fsn_fibre;
 
 		if (ev[i].events & EPOLLERR) {
 			socklen_t len = sizeof sockerr;
-			if (getsockopt(f->f_fd, SOL_SOCKET, SO_ERROR, &sockerr, &len)) {
+			if (getsockopt(f->f_fd, SOL_SOCKET, SO_ERROR, &sockerr,
+					&len)) {
 				opterr = errno;
 				opterrstring = strerror(opterr);
-				fprintf(stderr, "getsockopt(%d, SOL_SOCKET, SO_ERROR) -> %s\n",
+				fprintf(stderr, "getsockopt(%d, ...) -> %s\n",
 					f->f_fd, opterrstring);
 			}
 			errno = sockerr;
 			err(1, "epoll_wait -> EPOLLERR");
 		}
 
-		transfer_node(ev[i].data.ptr, ready, waiting);
+		transfer_node(&fibres[ev[i].data.u32], ready, waiting);
 		ev[i].events = 0;
-		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD, f->f_fd, &ev[i]))
+		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD,
+				f->f_fd, &ev[i]))
 			err(1, "epoll_ctl(EPOLL_CTL_MOD)");
 	}
 
@@ -301,63 +302,88 @@ fibre_store_poll(struct fibre_store_list *ready,
 }
 
 static
-struct fibre *
-try_fibre_store_poll_dequeue(
-		struct fibre_store_list *ready,
-		struct fibre_store_list *waiting)
+int
+try_fibre_store_poll_dequeue(int prio)
 {
+	struct fibre_store_list *waiting
+		= &global_fibre_store.fs_lists[FL_HIGH_WAITING + prio];
+
+	/* fprintf(stderr, "try_fibre_store_poll_dequeue(prio=%d)\n", prio); */
+
 	if (waiting->fsl_count)
-		fibre_store_poll(ready, waiting);
-	return try_fibre_store_list_dequeue(ready);
+		fibre_store_poll(prio);
+	return try_fibre_store_list_dequeue_ready(prio);
 }
 
 static
-struct fibre *
-fibre_store_get_next_ready(struct fibre_store *store)
-{
-	struct fibre *f = NULL;
-	ptrdiff_t i;
-	int ecount;
-	struct epoll_event ev;
+int
+current_fibre;
 
-	while (f == NULL) {
-		for (i = 0; i < FP_NUM_PRIOS; i++) {
-			f = try_fibre_store_poll_dequeue(&store->fs_lists[i],
-				&store->fs_lists[FL_HIGH_WAITING + i]);
-			if (f) return f;
+static
+const int
+main_fibre = 0;
+
+static
+int
+global_fibre_count;
+
+static
+void
+print_fibre_lists(void)
+{
+	ptrdiff_t i;
+
+	for (i = 0; i < FL_NUM_LISTS; i++) {
+		struct fibre_store_list *list = &global_fibre_store.fs_lists[i];
+		struct fibre_store_node *node;
+		if (TAILQ_EMPTY(&list->fsl_nodes)) {
+			fprintf(stderr, "%ld: (empty)\n", i);
+			continue;
+		}
+		fprintf(stderr, "%ld: ", i);
+		TAILQ_FOREACH(node, &list->fsl_nodes, fsn_nodes) {
+			fprintf(stderr, "%ld ", node - fibres);
+		}
+		fprintf(stderr, "\n");
+	}
+}
+
+static
+int
+fibre_store_get_next_ready(void)
+{
+	ptrdiff_t prio;
+	int ecount, idx = -1;
+	struct epoll_event ev = {0};
+
+	while (idx == -1) {
+		for (prio = 0; prio < FP_NUM_PRIOS; prio++) {
+			idx = try_fibre_store_poll_dequeue(prio);
+			if (idx != -1) {
+				/* fprintf(stderr, "inloop = %d\n", idx); */
+				return idx;
+			}
 		}
 
-		do ecount = epoll_wait(store->fs_epfd, &ev, 1, -1);
+		do ecount = epoll_wait(global_fibre_store.fs_epfd, &ev, 1, -1);
 		while (ecount == -1 && errno == EINTR);
 		assert(ecount == 1);
 
 		assert(ev.events & EPOLLIN);
 		assert(!(ev.events & EPOLLERR));
 
-		i = ev.data.u32;
-		f = try_fibre_store_poll_dequeue(&store->fs_lists[i],
-			&store->fs_lists[FL_HIGH_WAITING + i]);
+		prio = ev.data.u32;
+		idx = try_fibre_store_poll_dequeue(prio);
 	}
 
-	return f;
+	/* fprintf(stderr, "afterloop = %d\n", idx); */
+	return idx;
 }
-
-static
-struct fibre
-*current_fibre, *main_fibre;
-
-static
-struct fibre_store
-global_fibre_store;
-
-static
-int
-global_fibre_count;
 
 int
 fibre_current(void)
 {
-	return current_fibre->f_id;
+	return current_fibre;
 }
 
 void
@@ -366,31 +392,9 @@ fibre_init(size_t stack_size)
 	size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
 	ptrdiff_t i;
 	int epfd;
-	struct epoll_event ev;
-
-#ifndef NDEBUG
-	warnx("Initialising fibre system with %luKiB-sized stacks",
-		stack_size / 1024);
-
-#define BLOCK_SIZE (sizeof(struct fibre_store_block))
-#define NODE_SIZE (sizeof(struct fibre_store_node))
-	if (BLOCK_SIZE > 4 * page_size)
-		warnx("fibre_store_block is too big to fit in four pages: lower FIBRE_STORE_NODES_PER_BLOCK (%lu)",
-			BLOCK_SIZE);
-	else if (BLOCK_SIZE + NODE_SIZE <= 4 * page_size)
-		warnx("fibre_store_block could be bigger: raise FIBRE_STORE_NODES_PER_BLOCK (%lu)",
-			BLOCK_SIZE);
-	else
-		warnx("fibre_store_block fits perfectly in four pages (%lu)",
-			BLOCK_SIZE);
-#undef BLOCK_SIZE
-#undef NODE_SIZE
-#else
-	(void)page_size;
-#endif /* NDEBUG */
+	struct epoll_event ev = {0};
 
 	global_fibre_store.fs_stack_size = stack_size;
-	SLIST_INIT(&global_fibre_store.fs_blocks);
 	global_fibre_store.fs_epfd = epoll_create1(O_CLOEXEC);
 
 	for (i = 0; i < FL_NUM_LISTS; i++)
@@ -410,43 +414,15 @@ fibre_init(size_t stack_size)
 			err(1, "epoll_ctl(EPOLL_CTL_ADD)");
 	}
 
-	main_fibre = fibre_store_get_first_empty(&global_fibre_store);
-	main_fibre->f_state = FS_ACTIVE;
-	main_fibre->f_fd = -1;
-	main_fibre->f_id = 0;
-	main_fibre->f_prio = FP_NORMAL; /* is this right? */
-	main_fibre->f_stack = NULL;
+	/* main_fibre = fibre_store_get_first_empty(); */
+	fibres[main_fibre].fsn_fibre.f_state = FS_ACTIVE;
+	fibres[main_fibre].fsn_fibre.f_fd = -1;
+	fibres[main_fibre].fsn_fibre.f_id = 0;
+	fibres[main_fibre].fsn_fibre.f_prio = FP_NORMAL; /* is this right? */
+	fibres[main_fibre].fsn_fibre.f_stack = NULL;
 
 	current_fibre = main_fibre;
 }
-
-/* This should be further up, but the assertion requires it to be after the
- * declaration of main_fibre */
-static
-void
-fibre_store_destroy(struct fibre_store *store)
-{
-	ptrdiff_t i;
-	struct fibre_store_block *block;
-
-	while (!SLIST_EMPTY(&store->fs_blocks)) {
-		block = SLIST_FIRST(&store->fs_blocks);
-
-		for (i = 0; i < FIBRE_STORE_NODES_PER_BLOCK; i++) {
-			if (&block->fsb_nodes[i].fsn_fibre == main_fibre)
-				continue;
-			if (block->fsb_nodes[i].fsn_fibre.f_stack == NULL)
-				continue;
-			mmap_deallocate(
-				block->fsb_nodes[i].fsn_fibre.f_stack,
-				store->fs_stack_size);
-		}
-
-		SLIST_REMOVE_HEAD(&store->fs_blocks, fsb_blocks);
-		mmap_deallocate(block, sizeof *block);
-	}
-}
-
 
 void
 fibre_finish(void)
@@ -456,17 +432,15 @@ fibre_finish(void)
 	warnx("Fibre stat stack_allocs: %ld", fibre_stats.fstat_stack_allocs);
 	warnx("Fibre stat fibre_go_calls: %ld", fibre_stats.fstat_fibre_go_calls);
 	warnx("Fibre stat iocalls: %ld", fibre_stats.fstat_iocalls);
-
-	fibre_store_destroy(&global_fibre_store);
 }
 
 void
 fibre_return(void)
 {
-	/* fprintf(stderr, "Returning from fibre %p\n", (void *)current_fibre); */
+	/* fprintf(stderr, "fibre_return(current=%d)\n", current_fibre); */
 
 	if (current_fibre != main_fibre) {
-		current_fibre->f_state = FS_EMPTY;
+		fibres[current_fibre].fsn_fibre.f_state = FS_EMPTY;
 		fibre_store_list_enqueue(
 			&global_fibre_store.fs_lists[FL_EMPTY],
 			current_fibre);
@@ -497,41 +471,52 @@ fibre_return(void)
 
 static
 void
-fibre_enqueue_ready(struct fibre *fibre)
+fibre_enqueue_ready(int f)
 {
-	fibre->f_state = FS_READY;
+	/* fprintf(stderr, "fibre_enqueue_ready(f=%d, prio=%d, state=%d);\n", */
+		/* f, fibres[f].fsn_fibre.f_prio, fibres[f].fsn_fibre.f_state); */
+	fibres[f].fsn_fibre.f_state = FS_READY;
 	fibre_store_list_enqueue(
-		&global_fibre_store.fs_lists[fibre->f_prio],
-		fibre);
+		&global_fibre_store.fs_lists[fibres[f].fsn_fibre.f_prio],
+		f);
 }
 
 static
 void
-fibre_enqueue_waiting(struct fibre *fibre, int fd, int events)
+fibre_enqueue_waiting(int f, int count, int *fd, int *events)
 {
-	struct fibre_store_list *waiting
-		= &global_fibre_store.fs_lists[FL_HIGH_WAITING + fibre->f_prio];
-	struct epoll_event ev;
+	int prio = fibres[f].fsn_fibre.f_prio;
+	struct fibre_store_list *waiting =
+		&global_fibre_store.fs_lists[FL_HIGH_WAITING + prio];
+	struct epoll_event ev = {0};
 
-	ev.events = events;
-	ev.data.ptr = container_of(struct fibre_store_node, fsn_fibre, fibre);
+	/* fprintf(stderr, "fibre_enqueue_waiting(%d(prio=%d), %d);\n", */
+	/* 	f, prio, count); */
 
-	fibre->f_state = FS_WAITING;
-	fibre_store_list_enqueue(waiting, fibre);
+	while (count--) {
+		ev.events = events[count];
+		ev.data.u32 = f;
 
-	if (fibre->f_fd == fd) {
-		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD, fibre->f_fd, &ev))
-			err(1, "epoll_ctl(EPOLL_CTL_MOD)");
-		return;
+		if (fibres[f].fsn_fibre.f_fd == fd[count]) {
+			if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_MOD,
+					fibres[f].fsn_fibre.f_fd, &ev))
+				err(1, "epoll_ctl(EPOLL_CTL_MOD)");
+		} else {
+			if (fibres[f].fsn_fibre.f_fd != -1) {
+				if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_DEL,
+						fibres[f].fsn_fibre.f_fd,
+						NULL))
+					err(1, "epoll_ctl(EPOLL_CTL_DEL)");
+			}
+			fibres[f].fsn_fibre.f_fd = fd[count];
+			if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_ADD,
+					fibres[f].fsn_fibre.f_fd, &ev))
+				err(1, "epoll_ctl(EPOLL_CTL_ADD)");
+		}
 	}
 
-	if (fibre->f_fd != -1)
-		if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_DEL, fibre->f_fd, NULL))
-			err(1, "epoll_ctl(EPOLL_CTL_DEL)");
-
-	fibre->f_fd = fd;
-	if (epoll_ctl(waiting->fsl_epfd, EPOLL_CTL_ADD, fibre->f_fd, &ev))
-		err(1, "epoll_ctl(EPOLL_CTL_ADD)");
+	fibres[f].fsn_fibre.f_state = FS_WAITING;
+	fibre_store_list_enqueue(waiting, f);
 }
 
 ssize_t
@@ -630,58 +615,63 @@ fibre_sendto(int fd, const void *buf, size_t len, int flags,
 	return n;
 }
 
+/*
+ * awaitfd = fibre_yield_impl(1, &fd, &events)
+ * awaitfd_timeout = fibre_yield_impl(2, &[fd, timerfd], &[events, POLLIN]);
+ * yield = fibre_yield_impl(0, NULL, NULL)
+ */
 static
 int
-fibre_yield_impl(int fd, int events)
+fibre_yield_impl(int count, int *fd, int *events)
 {
 	struct fibre_ctx *old, *new;
-	struct fibre *old_fibre, *fibre;
+	int old_fibre, fibre;
 
-	/* if BUILD_VALGRIND is false, this variable is unused */
-	(void)old_fibre;
+	/* print_fibre_lists(); */
 
-	if (current_fibre->f_state != FS_EMPTY) {
-		if (fd != -1)
-			fibre_enqueue_waiting(current_fibre, fd, events);
+	/* fprintf(stderr, "fibre_yield_impl: Yielding from fibre %d.\n", current_fibre); */
+
+	if (fibres[current_fibre].fsn_fibre.f_state != FS_EMPTY) {
+		if (count > 0)
+			fibre_enqueue_waiting(current_fibre, count, fd, events);
 	}
 
-	fibre = fibre_store_get_next_ready(&global_fibre_store);
-	if (fibre == NULL) {
-		/* fprintf(stderr, "Yielding from fibre %p, finishing\n", */
-		/* 	(void *)current_fibre); */
+	fibre = fibre_store_get_next_ready();
+	if (fibre == -1) {
+		/* fprintf(stderr, "Yielding from fibre %d, finishing\n", current_fibre); */
 		return 0;
 	}
 
-	if (current_fibre->f_state != FS_EMPTY) {
-		if (fd == -1)
+	if (fibres[current_fibre].fsn_fibre.f_state != FS_EMPTY) {
+		if (count == 0)
 			fibre_enqueue_ready(current_fibre);
 	}
 
-	fibre->f_state = FS_ACTIVE;
-	old = &current_fibre->f_ctx;
-	new = &fibre->f_ctx;
+	fibres[fibre].fsn_fibre.f_state = FS_ACTIVE;
+	old = &fibres[current_fibre].fsn_fibre.f_ctx;
+	new = &fibres[fibre].fsn_fibre.f_ctx;
 	old_fibre = current_fibre;
 	current_fibre = fibre;
-	/* fprintf(stderr, "Yielding from fibre %d to fibre %d.\n", */
-	/* 	   old_fibre->f_id, */
-	/* 	   current_fibre->f_id); */
+	(void)old_fibre;
+	/* fprintf(stderr, "Paused fibre %d.\n", old_fibre); */
 #ifdef BUILD_SANITISE
-	__sanitizer_start_switch_fiber(NULL, current_fibre->f_stack, global_fibre_store.fs_stack_size);
+	__sanitizer_start_switch_fiber(NULL,
+		fibres[current_fibre].fsn_fibre.f_stack,
+		global_fibre_store.fs_stack_size);
 #endif
 	fibre_switch(old, new);
 #ifdef BUILD_SANITISE
 	__sanitizer_finish_switch_fiber(NULL, NULL, NULL);
 #endif
-	/* fprintf(stderr, "Yielded from fibre %d to fibre %d.\n", */
-	/* 	   old_fibre->f_id, */
-	/* 	   current_fibre->f_id); */
+	/* fprintf(stderr, "Resumed fibre %d.\n", current_fibre); */
 	return 1;
 }
 
 int
 fibre_awaitfd(int fd, int events)
 {
-	return fibre_yield_impl(fd, events);
+	/* fprintf(stderr, "fibre_awaitfd(current=%d, fd=%d)\n", current_fibre, fd); */
+	return fibre_yield_impl(1, &fd, &events);
 }
 
 void
@@ -697,14 +687,15 @@ fibre_close(int fd)
 	if (close(fd))
 		warn("close");
 
-	if (current_fibre->f_fd == fd)
-		current_fibre->f_fd = -1;
+	if (fibres[current_fibre].fsn_fibre.f_fd == fd)
+		fibres[current_fibre].fsn_fibre.f_fd = -1;
 }
 
 int
 fibre_yield(void)
 {
-	return fibre_yield_impl(-1, 0);
+	/* fprintf(stderr, "fibre_yield(current=%d)\n", current_fibre); */
+	return fibre_yield_impl(0, NULL, NULL);
 }
 
 #define FMTREG "0x%010llx"
@@ -722,7 +713,10 @@ fibre_call(void)
 #ifdef BUILD_SANITISE
 	__sanitizer_finish_switch_fiber(NULL, NULL, NULL);
 #endif
-	current_fibre->f_func(current_fibre->f_datan, current_fibre->f_datap);
+	/* fprintf(stderr, "Started fibre %d.\n", current_fibre); */
+	fibres[current_fibre].fsn_fibre.f_func(
+		fibres[current_fibre].fsn_fibre.f_datan,
+		fibres[current_fibre].fsn_fibre.f_datap);
 }
 
 void
@@ -730,7 +724,11 @@ fibre_go(int prio, void (*func)(long, void *), long datan, void *datap)
 {
 	char *stack;
 	size_t size = global_fibre_store.fs_stack_size;
-	struct fibre *fibre = fibre_store_get_first_empty(&global_fibre_store);
+	struct fibre *fibre;
+	int f;
+
+	f = fibre_store_get_first_empty();
+	fibre = &fibres[f].fsn_fibre;
 
 	fibre_stats.fstat_fibre_go_calls++;
 	if (fibre->f_stack == NULL) {
@@ -746,11 +744,7 @@ fibre_go(int prio, void (*func)(long, void *), long datan, void *datap)
 	*(uint64_t *)&stack[size -  8] = (uint64_t)fibre_stop;
 	*(uint64_t *)&stack[size - 16] = (uint64_t)fibre_call;
 	fibre->f_ctx.fc_rsp = (uint64_t)&stack[size - 16];
-	/* Obviously this doesn't actually work! OBVIOUSLY! We need to use an
-	 * assembly function to put this pointer into rsi before the first call
-	 * to this fibre.
-	 *     fibre->f_ctx.rsi = (uint64_t)data;
-	 */
+
 	fibre->f_id = ++global_fibre_count;
 	fibre->f_state = FS_READY;
 	fibre->f_prio = prio;
@@ -758,10 +752,12 @@ fibre_go(int prio, void (*func)(long, void *), long datan, void *datap)
 	fibre->f_func = func;
 	fibre->f_datap = datap;
 	fibre->f_datan = datan;
-	fibre_enqueue_ready(fibre);
+	fibre_enqueue_ready(f);
 }
 
-static void *mmap_allocate(size_t m)
+static
+void *
+mmap_allocate(size_t m)
 {
 	void *p;
 
@@ -776,7 +772,9 @@ static void *mmap_allocate(size_t m)
 	return p;
 }
 
-static void  mmap_deallocate(void *p, size_t n)
+static
+void
+mmap_deallocate(void *p, size_t n)
 {
 	int r;
 
@@ -786,4 +784,21 @@ static void  mmap_deallocate(void *p, size_t n)
 #ifdef BUILD_VALGRIND
 	VALGRIND_FREELIKE_BLOCK(p, 0);
 #endif
+}
+
+/* adds a fibre to the start of the list */
+static
+void
+fibre_store_list_enqueue(struct fibre_store_list *list, int fibre)
+{
+	int L = list - global_fibre_store.fs_lists;
+	/* fprintf(stderr, "fibre_store_list_enqueue(list=%d, fibre=%d)\n", */
+	/* 	L, fibre); */
+
+	struct fibre_store_node *node = fibres + fibre;
+	/* print_fibre_lists(); */
+	TAILQ_INSERT_HEAD(&list->fsl_nodes, node, fsn_nodes);
+	/* fprintf(stderr, "Failure?\n"); */
+	/* print_fibre_lists(); */
+	list->fsl_count++;
 }

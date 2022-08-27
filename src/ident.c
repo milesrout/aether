@@ -29,6 +29,7 @@
 #include "packet.h"
 #include "msg.h"
 #include "ident.h"
+#include "persist.h"
 
 static
 int
@@ -73,46 +74,76 @@ ident_opkssub_msg_init(struct ident_state *state, uint8_t *text, size_t text_siz
 	return padme_enc(IDENT_OPKSSUB_MSG_SIZE(count));
 }
 
-size_t
-ident_opkssub_ack_init(uint8_t *text, size_t text_size, uint8_t result)
+ssize_t
+ident_opkssub_ack_init(uint8_t *text, size_t size, uint64_t id, uint64_t rid,
+		uint8_t result)
 {
-	struct ident_opkssub_ack_msg *msg = (struct ident_opkssub_ack_msg *)text;
-	(void)text_size;
+	if (persist_store8(PROTO_IDENT,                &text, &size)) return -1;
+	if (persist_store8(IDENT_OPKSSUB_ACK,          &text, &size)) return -1;
+	if (persist_store16_le(IDENT_OPKSSUB_ACK_SIZE, &text, &size)) return -1;
+	if (persist_store64_le(id,                     &text, &size)) return -1;
+	if (persist_store64_le(rid,                    &text, &size)) return -1;
+	if (persist_store8(result,                     &text, &size)) return -1;
 
-	msg->msg.proto = PROTO_IDENT;
-	msg->msg.type = IDENT_OPKSSUB_ACK;
-	store16_le(msg->msg.len, sizeof *msg);
-	msg->result = result;
-
-	return padme_enc(sizeof *msg);
+	return IDENT_OPKSSUB_ACK_SIZE;
 }
 
-size_t
-ident_spksub_ack_init(uint8_t *text, size_t text_size, uint8_t result)
+ssize_t
+ident_spksub_ack_init(uint8_t *text, size_t size, uint64_t id, uint64_t rid,
+		uint8_t result)
 {
-	struct ident_spksub_ack_msg *msg = (struct ident_spksub_ack_msg *)text;
-	(void)text_size;
+	if (persist_store8(PROTO_IDENT,               &text, &size)) return -1;
+	if (persist_store8(IDENT_SPKSUB_ACK,          &text, &size)) return -1;
+	if (persist_store16_le(IDENT_SPKSUB_ACK_SIZE, &text, &size)) return -1;
+	if (persist_store64_le(id,                    &text, &size)) return -1;
+	if (persist_store64_le(rid,                   &text, &size)) return -1;
+	if (persist_store8(result,                    &text, &size)) return -1;
 
-	msg->msg.proto = PROTO_IDENT;
-	msg->msg.type = IDENT_SPKSUB_ACK;
-	store16_le(msg->msg.len, sizeof *msg);
-	msg->result = result;
-
-	return padme_enc(sizeof *msg);
+	return IDENT_SPKSUB_ACK_SIZE;
 }
 
-size_t
-ident_register_ack_init(uint8_t *text, size_t text_size, uint8_t result)
+ssize_t
+ident_register_ack_init(uint8_t *text, size_t size, uint64_t id, uint64_t rid,
+		uint8_t result)
 {
-	struct ident_register_ack_msg *msg = (struct ident_register_ack_msg *)text;
-	(void)text_size;
+	if (persist_store8(PROTO_IDENT,                 &text, &size)) return -1;
+	if (persist_store8(IDENT_REGISTER_ACK,          &text, &size)) return -1;
+	if (persist_store16_le(IDENT_REGISTER_ACK_SIZE, &text, &size)) return -1;
+	if (persist_store64_le(id,                      &text, &size)) return -1;
+	if (persist_store64_le(rid,                     &text, &size)) return -1;
+	if (persist_store8(result,                      &text, &size)) return -1;
 
-	msg->msg.proto = PROTO_IDENT;
-	msg->msg.type = IDENT_REGISTER_ACK;
-	store16_le(msg->msg.len, sizeof *msg);
-	msg->result = result;
+	return IDENT_REGISTER_ACK_SIZE;
+}
 
-	return padme_enc(sizeof *msg);
+ssize_t
+ident_lookup_rep_init(uint8_t *text, size_t size, uint64_t id, uint64_t rid,
+		uint8_t isk[32])
+{
+	if (persist_store8(PROTO_IDENT,               &text, &size)) return -1;
+	if (persist_store8(IDENT_LOOKUP_REP,          &text, &size)) return -1;
+	if (persist_store16_le(IDENT_LOOKUP_REP_SIZE, &text, &size)) return -1;
+	if (persist_store64_le(id,                    &text, &size)) return -1;
+	if (persist_store64_le(rid,                   &text, &size)) return -1;
+	if (persist_storebytes(isk, 32,               &text, &size)) return -1;
+
+	return IDENT_LOOKUP_REP_SIZE;
+}
+
+ssize_t
+ident_keyreq_rep_init(uint8_t *text, size_t size, uint64_t id, uint64_t rid,
+		uint8_t spk[32], uint8_t spk_sig[64], uint8_t opk[32])
+{
+	if (persist_store8(PROTO_IDENT,               &text, &size)) return -1;
+	if (persist_store8(IDENT_KEYREQ_REP,          &text, &size)) return -1;
+	if (persist_store16_le(IDENT_KEYREQ_REP_SIZE, &text, &size)) return -1;
+	if (persist_store64_le(id,                    &text, &size)) return -1;
+	if (persist_store64_le(rid,                   &text, &size)) return -1;
+	if (persist_storebytes(spk,     32,           &text, &size)) return -1;
+	if (persist_storebytes(spk_sig, 64,           &text, &size)) return -1;
+	if (persist_storebytes(opk,     32,           &text, &size)) return -1;
+
+	return IDENT_KEYREQ_REP_SIZE;
 }
 
 size_t
@@ -177,52 +208,38 @@ ident_lookup_msg_init(uint8_t *text, size_t text_size, const char *username)
 }
 
 size_t
-ident_lookup_rep_init(uint8_t *text, size_t text_size, uint8_t isk[32])
+ident_rlookup_msg_init(uint8_t *text, size_t text_size, uint8_t isk[32])
 {
-	struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)text;
-	(void)text_size;
-
-	msg->msg.proto = PROTO_IDENT;
-	msg->msg.type = IDENT_LOOKUP_REP;
-	store16_le(msg->msg.len, sizeof *msg);
-	memcpy(msg->isk, isk, 32);
-
-	return padme_enc(sizeof *msg);
-}
-
-size_t
-ident_reverse_lookup_msg_init(uint8_t *text, size_t text_size, uint8_t isk[32])
-{
-	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
-	size_t msg_size = IDENT_REVERSE_LOOKUP_MSG_SIZE;
-	size_t padded_size = padme_enc(IDENT_REVERSE_LOOKUP_MSG_SIZE);
+	struct ident_rlookup_msg *msg = (struct ident_rlookup_msg *)text;
+	size_t msg_size = IDENT_RLOOKUP_MSG_SIZE;
+	size_t padded_size = padme_enc(IDENT_RLOOKUP_MSG_SIZE);
 	size_t padding = padded_size - msg_size;
 	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
-	msg->msg.type = IDENT_REVERSE_LOOKUP_MSG;
-	store16_le(msg->msg.len, IDENT_REVERSE_LOOKUP_MSG_SIZE);
+	msg->msg.type = IDENT_RLOOKUP_MSG;
+	store16_le(msg->msg.len, IDENT_RLOOKUP_MSG_SIZE);
 	memcpy(msg->isk, isk, 32);
 	memset(text + msg_size, 0, padding);
 
-	return padme_enc(IDENT_REVERSE_LOOKUP_MSG_SIZE);
+	return padme_enc(IDENT_RLOOKUP_MSG_SIZE);
 }
 
 size_t
-ident_reverse_lookup_rep_init(uint8_t *text, size_t text_size, const char *username)
+ident_rlookup_rep_init(uint8_t *text, size_t text_size, const char *username)
 {
-	struct ident_reverse_lookup_reply_msg *msg = (struct ident_reverse_lookup_reply_msg *)text;
+	struct ident_rlookup_reply_msg *msg = (struct ident_rlookup_reply_msg *)text;
 	uint8_t len = strlen(username);
 	(void)text_size;
 
 	msg->msg.proto = PROTO_IDENT;
-	msg->msg.type = IDENT_REVERSE_LOOKUP_REP;
-	store16_le(msg->msg.len, IDENT_REVERSE_LOOKUP_REP_SIZE(len));
+	msg->msg.type = IDENT_RLOOKUP_REP;
+	store16_le(msg->msg.len, IDENT_RLOOKUP_REP_SIZE(len));
 	msg->username_len = len;
 	memcpy(msg->username, username, len);
 	msg->username[len] = '\0';
 
-	return padme_enc(IDENT_REVERSE_LOOKUP_REP_SIZE(len));
+	return padme_enc(IDENT_RLOOKUP_REP_SIZE(len));
 }
 
 size_t
@@ -238,21 +255,5 @@ ident_keyreq_msg_init(struct ident_state *state, uint8_t *text, size_t text_size
 
 	(void)state;
 
-	return padme_enc(IDENT_KEYREQ_MSG_SIZE);
-}
-
-size_t
-ident_keyreq_rep_init(uint8_t *text, size_t text_size, uint8_t spk[32], uint8_t spk_sig[64], uint8_t opk[32])
-{
-	struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)text;
-	(void)text_size;
-
-	msg->msg.proto = PROTO_IDENT;
-	msg->msg.type = IDENT_KEYREQ_REP;
-	store16_le(msg->msg.len, sizeof *msg);
-	memcpy(msg->spk,     spk,     32);
-	memcpy(msg->spk_sig, spk_sig, 64);
-	memcpy(msg->opk,     opk,     32);
-
-	return padme_enc(sizeof *msg);
+	return IDENT_KEYREQ_MSG_SIZE;
 }

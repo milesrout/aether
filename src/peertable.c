@@ -137,6 +137,8 @@ peer_add(struct peertable *pt, const struct peer_init *pi)
 	memset(peer->service, 0, NI_MAXSERV);
 	memset(&peer->state, 0, sizeof peer->state);
 	STAILQ_INIT(&peer->recvq);
+	STAILQ_INIT(&peer->state.eventq);
+	STAILQ_INIT(&peer->state.sendq);
 	peer->eventfd = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK);
 	if (peer->eventfd == -1) {
 		free(peer);

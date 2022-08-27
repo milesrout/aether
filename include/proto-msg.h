@@ -14,7 +14,14 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#define PROTO_MSG ((uint8_t)4)
-#define MSG_ACK   ((uint8_t)1)
-#define MSG_NACK  ((uint8_t)2)
-#define MSG_UNACK ((uint8_t)3)
+#define PROTO_MSG  ((uint8_t)4)
+/* #define MSG_ACK    ((uint8_t)1) */
+/* #define MSG_NACK   ((uint8_t)2) */
+/* #define MSG_UNACK  ((uint8_t)3) */
+/* #define MSG_RESULT ((uint8_t)6) */
+enum {
+	MSG_ACK = 1,
+	MSG_NACK,
+	MSG_UNACK,
+	MSG_RESULT,
+};

@@ -54,6 +54,8 @@
 /* TODO: discover through DNS or HTTPS or something */
 #include "isks.h"
 
+extern char *__progname;
+
 static
 uint8_t zero_key[32] = {0};
 
@@ -82,18 +84,29 @@ handle_ident_replies(union packet_state *state, int fd, uint8_t buf[BUFSZ])
 	if (error)
 		errg(fail, "handle_ident_replies: Failed to read from socket: %s", error);
 
-	size = PACKET_TEXT_SIZE(nread);
 	if (nread < PACKET_BUF_SIZE(0))
-		errg(fail, "handle_ident_replies: Received a message that is too small");
+		errg(fail, "handle_ident_replies: Received a message that is too small: %lu", nread);
+
+	size = PACKET_TEXT_SIZE(nread);
 
 	if (packet_unlock(state, buf, nread))
 		errg(fail, "handle_ident_replies: Message cannot be decrypted");
 
-	if (size >= 1) {
-		struct msg *msg = (struct msg *)text;
+	while (size >= sizeof(struct msg)) {
+		struct msg *msg = (void *)text;
+
+		/* padding */
+		if (msg->proto == 0 || msg->type == 0)
+			break;
+
+		fprintf(stderr, "while (%lu > %lu)\n", size, sizeof(struct msg));
 
 		if (msg->proto != PROTO_IDENT)
-			errg(fail, "handle_ident_replies: Message is not an identity-related message");
+			goto unknown;
+			/* warnx("handle_ident_replies: Message is not an identity-related message"); */
+			/* text += sizeof *msg; */
+			/* return -2; */
+		/* } */
 
 		switch (msg->type) {
 		case IDENT_OPKSSUB_ACK: {
@@ -103,7 +116,7 @@ handle_ident_replies(union packet_state *state, int fd, uint8_t buf[BUFSZ])
 			fprintf(stderr, "OPKs submission ack\n");
 			if (msg->result)
 				goto fail;
-			break;
+			goto done;
 		}
 		case IDENT_SPKSUB_ACK: {
 			struct ident_spksub_ack_msg *msg = (void *)text;
@@ -112,7 +125,7 @@ handle_ident_replies(union packet_state *state, int fd, uint8_t buf[BUFSZ])
 			fprintf(stderr, "SPK submission ack\n");
 			if (msg->result)
 				goto fail;
-			break;
+			goto done;
 		}
 		case IDENT_REGISTER_ACK: {
 			struct ident_register_ack_msg *msg = (void *)text;
@@ -121,16 +134,23 @@ handle_ident_replies(union packet_state *state, int fd, uint8_t buf[BUFSZ])
 			fprintf(stderr, "Registration submission ack\n");
 			if (msg->result)
 				goto fail;
-			break;
+			goto done;
 		}
 		default:
-			fprintf(stderr, "handle_ident_replies: Unrecognised message type %d\n", text[0]);
-			fprintf(stderr, "(proto,type,len) = (%d,%d,%d)\n",
-				msg->proto, msg->type, load16_le(msg->len));
-			displaykey("buf (decrypted)", buf, nread);
-			displaykey("text", text, size);
-			goto fail;
+			goto unknown;
 		}
+		continue;
+	unknown:
+		fprintf(stderr, "handle_ident_replies: Unrecognised message type: ");
+		fprintf(stderr, "(proto,type,len) = (%d,%d,%d)\n",
+			msg->proto, msg->type, load16_le(msg->len));
+		displaykey("buf (decrypted)", buf, nread);
+		displaykey("text", text, size);
+	done:
+		if (size <= load16_le(msg->len))
+			break;
+		text += load16_le(msg->len);
+		size -= load16_le(msg->len);
 	}
 
 	return 0;
@@ -153,7 +173,7 @@ get_username(const char **username_storage, union packet_state *state, int fd, u
 	uint8_t buf[1024];
 	size_t bufsz = 1024;
 
-	size = ident_reverse_lookup_msg_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), isk);
+	size = ident_rlookup_msg_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), isk);
 	error = send_packet(state, fd, buf, size);
 	if (error)
 		errg(fail, "Failed to send packet: %s", error);
@@ -170,16 +190,16 @@ get_username(const char **username_storage, union packet_state *state, int fd, u
 		errg(fail, "Message cannot be decrypted");
 
 	{
-		struct ident_reverse_lookup_reply_msg *msg = (struct ident_reverse_lookup_reply_msg *)PACKET_TEXT(buf);
-		if (PACKET_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_BASE_SIZE)
+		struct ident_rlookup_reply_msg *msg = (struct ident_rlookup_reply_msg *)PACKET_TEXT(buf);
+		if (PACKET_TEXT_SIZE(nread) < IDENT_RLOOKUP_REP_BASE_SIZE)
 			errg(fail, "Identity reverse lookup reply message (%lu) is too small (%lu)",
-				PACKET_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_BASE_SIZE);
-		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_REVERSE_LOOKUP_REP)
+				PACKET_TEXT_SIZE(nread), IDENT_RLOOKUP_REP_BASE_SIZE);
+		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_RLOOKUP_REP)
 			errg(fail, "Identity lookup reply message has invalid proto or msgtype (%d, %d)",
 				msg->msg.proto, msg->msg.type);
-		if (PACKET_TEXT_SIZE(nread) < IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len))
+		if (PACKET_TEXT_SIZE(nread) < IDENT_RLOOKUP_REP_SIZE(msg->username_len))
 			errg(fail, "Identity reverse lookup reply message (%lu) is too small (%lu)",
-				PACKET_TEXT_SIZE(nread), IDENT_REVERSE_LOOKUP_REP_SIZE(msg->username_len));
+				PACKET_TEXT_SIZE(nread), IDENT_RLOOKUP_REP_SIZE(msg->username_len));
 
 		username = malloc(msg->username_len + 1);
 		if (!username)
@@ -611,8 +631,8 @@ register_identity(struct ident_state *ident, union packet_state *state,
 	struct pollfd pfds[1] = {{fd, POLLIN}};
 	unsigned regn_state = 0;
 	const char *error;
+	int pcount, r;
 	size_t size;
-	int pcount;
 
 	ident->username = name;
 
@@ -641,13 +661,31 @@ register_identity(struct ident_state *ident, union packet_state *state,
 		if (!pcount)
 			continue;
 
-		if (handle_ident_replies(state, fd, buf))
-			return -1;
+		if (r = handle_ident_replies(state, fd, buf)) {
+			if (r == -2) {
+				if (handle_ident_replies(state, fd, buf)) {
+					continue;
+				}
+			} else {
+				return -1;
+			}
+		}
 
 		regn_state++;
 	}
 
 	return 0;
+}
+
+__attribute__((noreturn))
+static
+void
+usage_B(const char *errmsg, int ret)
+{
+	if (errmsg)
+		fprintf(stderr, "%s: %s:", __progname, errmsg);
+	fprintf(stderr, "usage: %s -B [-b HOST] [-p PORT]\n", __progname);
+	exit(ret);
 }
 
 int
@@ -672,12 +710,12 @@ bob(char **argv, int subopt)
 	host = "127.0.0.1";
 	port = "3443";
 
-	while ((option = optparse(&options, "h:p:")) != -1) switch (option) {
-		case 'h': host = options.optarg; break;
+	while ((option = optparse(&options, "hb:p:")) != -1) switch (option) {
+		case 'b': host = options.optarg; break;
 		case 'p': port = options.optarg; break;
-		default:  usage(options.errmsg, 1); break;
+		case 'h': usage_B(NULL, 0);
+		default:  usage_B(options.errmsg, 1);
 	}
-
 
 	save_on_quit = 0;
 	fibre_init(CLIENT_STACK_SIZE);

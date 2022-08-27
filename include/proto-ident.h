@@ -25,5 +25,5 @@
 #define IDENT_REGISTER_ACK ((uint8_t)9)
 #define IDENT_LOOKUP_MSG ((uint8_t)10)
 #define IDENT_LOOKUP_REP ((uint8_t)11)
-#define IDENT_REVERSE_LOOKUP_MSG ((uint8_t)12)
-#define IDENT_REVERSE_LOOKUP_REP ((uint8_t)13)
+#define IDENT_RLOOKUP_MSG ((uint8_t)12)
+#define IDENT_RLOOKUP_REP ((uint8_t)13)

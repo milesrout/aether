@@ -44,6 +44,8 @@
 #include "persist.h"
 #include "lockedbuf.h"
 
+extern char *__progname;
+
 int
 prompt_line(char **buf, size_t *len, size_t *size, const char *prompt)
 {
@@ -234,7 +236,7 @@ store_keys(const char *filename, const char *password, size_t password_len,
 loop:	size += (size / 2);
 	left = size;
 
-	cur = buf = calloc(1, size);
+	cur = buf = realloc(buf, size);
 	assert(buf);
 
 	if (persist_storebytes(ident->isk,     32, &cur, &left)) goto fail;
@@ -339,7 +341,7 @@ loop:	size += (size / 2);
 	goto end;
 
 fail:
-	free(buf);
+	/* free(buf); */
 	goto loop;
 
 end:
@@ -349,8 +351,19 @@ end:
 
 int save_on_quit;
 
+__attribute__((noreturn))
+static
+void
+usage_A(const char *errmsg, int ret)
+{
+	if (errmsg)
+		fprintf(stderr, "%s: %s:", __progname, errmsg);
+	fprintf(stderr, "usage: %s -B [-b HOST] [-p PORT]\n", __progname);
+	exit(ret);
+}
+
 int
-alice(char **argv, int subopt)
+alice_old(char **argv, int subopt)
 {
 	int fd;
 	uint8_t ikb[32], spkb[32], opkb[32];
@@ -363,10 +376,11 @@ alice(char **argv, int subopt)
 	const char *host, *port;
 	uint8_t buf[BUFSZ] = {0};
 	size_t bufsz = BUFSZ;
-	char *username = NULL, *password = NULL;
+	char *username = NULL, *password = NULL, *peername = NULL;
 	size_t nread, size;
 	size_t username_len, username_size;
 	size_t password_len, password_size;
+	size_t peername_len, peername_size;
 	const char *error;
 	struct optparse options;
 	int option;
@@ -380,12 +394,13 @@ alice(char **argv, int subopt)
 	port = "3443";
 	mode = 'n';
 
-	while ((option = optparse(&options, "onh:p:")) != -1) switch (option) {
+	while ((option = optparse(&options, "onhb:p:")) != -1) switch (option) {
 		case 'o': mode = 'o'; break;
 		case 'n': mode = 'n'; break;
-		case 'h': host = options.optarg; break;
+		case 'b': host = options.optarg; break;
 		case 'p': port = options.optarg; break;
-		default:  usage(option == '?' ? options.errmsg : NULL, 1); break;
+		case 'h': usage_A(NULL, 0);
+		default:  usage(options.errmsg, 1);
 	}
 
 	save_on_quit = 1;
@@ -425,9 +440,9 @@ alice(char **argv, int subopt)
 	if (error)
 		errx(1, "%s", error);
 	if (nread < PACKET_REPLY_SIZE)
-		err(1, "Received invalid reply from server");
+		errx(1, "Received invalid reply from server");
 	if (packet_hshake_cfinish(&state, buf))
-		err(1, "Reply message cannot be decrypted");
+		errx(1, "Reply message cannot be decrypted");
 	crypto_wipe(buf, PACKET_REPLY_SIZE);
 
 	/* REGISTER username/SPKSUB/OPKSSUB keys */
@@ -435,7 +450,7 @@ alice(char **argv, int subopt)
 		goto skip_new_stuff;
 
 	if (prompt_line(&username, &username_len, &username_size, "Username"))
-		err(1, "Could not read username");
+		errx(1, "Could not read username");
 
 	if (register_identity(ident, &state, fd, buf, bufsz, username))
 		errx(1, "Cannot register username %s", username);
@@ -444,8 +459,11 @@ alice(char **argv, int subopt)
 		errx(1, "Could not store keys in file `%s'", "alice.keys");
 
 	/* send LOOKUP */
-	bobstate.username = "bob";
-	size = ident_lookup_msg_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), "bob");
+	if (prompt_line(&peername, &peername_len, &peername_size, "Peername"))
+		errx(1, "Could not read peer's name");
+
+	bobstate.username = peername;
+	size = ident_lookup_msg_init(PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), peername);
 	packet_lock(&state, buf, size);
 	safe_write(fd, buf, PACKET_BUF_SIZE(size));
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
@@ -455,17 +473,17 @@ alice(char **argv, int subopt)
 	if (error)
 		errx(1, "%s", error);
 	if (nread < PACKET_BUF_SIZE(0))
-		err(1, "Received a message that is too small");
+		errx(1, "Received a message that is too small");
 	if (packet_unlock(&state, buf, nread))
-		err(1, "Lookup message cannot be decrypted");
+		errx(1, "Lookup message cannot be decrypted");
 
 	{
-		struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)PACKET_TEXT(buf);
+		struct ident_lookup_reply_msg *msg = (struct ident_lookup_reply_msg *)(PACKET_TEXT(buf) + 12);
 		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
-			err(1, "Identity lookup reply message (%lu) is too small (%lu)",
+			errx(1, "Identity lookup reply message (%lu) is too small (%lu)",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_LOOKUP_REP)
-			err(1, "Identity lookup reply message has invalid proto or msgtype (%d, %d)",
+			errx(1, "Identity lookup reply message has invalid proto or msgtype (%d, %d)",
 				msg->msg.proto, msg->msg.type);
 
 		memcpy(bobstate.key.data, msg->isk, 32);
@@ -475,26 +493,32 @@ alice(char **argv, int subopt)
 
 	/* send KEYREQ */
 	size = ident_keyreq_msg_init(ident, PACKET_TEXT(buf), PACKET_TEXT_SIZE(bufsz), p2pstate->key.data);
-	packet_lock(&state, buf, size);
-	safe_write(fd, buf, PACKET_BUF_SIZE(size));
-	crypto_wipe(buf, PACKET_BUF_SIZE(size));
+	{
+		uint8_t *p = PACKET_TEXT(buf) + size;
+		size_t s = size;
+		if (persist_zeropad(padme_enc(size) - size, &p, &s))
+			errx(1, "total shambles");
+	}
+	packet_lock(&state, buf, padme_enc(size));
+	safe_write(fd, buf, padme(PACKET_BUF_SIZE(size)));
+	crypto_wipe(buf, padme(PACKET_BUF_SIZE(size)));
 
 	/* recv KEYREQ reply */
 	error = safe_read(&nread, fd, buf, bufsz);
 	if (error)
 		errx(1, "%s", error);
 	if (nread < PACKET_BUF_SIZE(0))
-		err(1, "Received a message that is too small");
+		errx(1, "Received a message that is too small");
 	if (packet_unlock(&state, buf, nread))
-		err(1, "Keyreq message cannot be decrypted");
+		errx(1, "Keyreq message cannot be decrypted");
 
 	{
-		struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)PACKET_TEXT(buf);
+		struct ident_keyreq_reply_msg *msg = (struct ident_keyreq_reply_msg *)(PACKET_TEXT(buf) + 12);
 		if (PACKET_TEXT_SIZE(nread) < sizeof *msg)
-			err(1, "Key bundle request reply message (%lu) is too small (%lu)",
+			errx(1, "Key bundle request reply message (%lu) is too small (%lu)",
 				PACKET_TEXT_SIZE(nread), sizeof *msg);
 		if (msg->msg.proto != PROTO_IDENT || msg->msg.type != IDENT_KEYREQ_REP)
-			err(1, "Key bundle request reply message has invalid proto or msgtype (%d, %d)",
+			errx(1, "Key bundle request reply message has invalid proto or msgtype (%d, %d)",
 				msg->msg.proto, msg->msg.type);
 
 		crypto_from_eddsa_public(ikb, p2pstate->key.data);
@@ -508,7 +532,7 @@ alice(char **argv, int subopt)
 	/* Peer-to-peer HELLO */
 	if (packet_hshake_aprepare(&p2pstate->state, ident->ik, ident->ik_prv,
 			p2pstate->key.data, ikb, spkb, spkb_sig, opkb))
-		err(1, "Error preparing handshake");
+		errx(1, "Error preparing handshake");
 
 skip_new_stuff:
 	/* Send and receive messages */
@@ -517,3 +541,112 @@ skip_new_stuff:
 	exit(0);
 }
 
+
+int
+alice(char **argv, int subopt)
+{
+	char       *username = NULL, *password = NULL, *peername = NULL, *desc = NULL;
+	size_t      username_size, password_size, peername_size, descsize;
+	size_t      username_len, password_len, peername_len, desclen;
+	struct      p2pstate *p2ptable = NULL;
+	struct      msg_state state = {0};
+	const char *host, *port, *error;
+	struct      ident_state *ident;
+	uint8_t     buf[BUFSZ] = {0};
+	struct      optparse options;
+	int         r, fd, option;
+	size_t      len, nread;
+	char        mode;
+
+	STAILQ_INIT(&state.eventq);
+	STAILQ_INIT(&state.sendq);
+
+	optparse_init(&options, argv - 1);
+	options.permute = 0;
+	options.subopt = subopt;
+
+	host = "127.0.0.1";
+	port = "3443";
+	mode = 'n';
+
+	while ((option = optparse(&options, "onhb:p:")) != -1) switch (option) {
+		case 'o': mode = 'o'; break;
+		case 'n': mode = 'n'; break;
+		case 'b': host = options.optarg; break;
+		case 'p': port = options.optarg; break;
+		case 'h': usage_A(NULL, 0);
+		default:  usage(options.errmsg, 1);
+	}
+
+	save_on_quit = 1;
+	fibre_init(CLIENT_STACK_SIZE);
+
+	ident = lockedbuf(NULL, sizeof(struct ident_state));
+
+	/* load or generate keys */
+	if (prompt_line(&password, &password_len, &password_size, "Password"))
+		errx(1, "Could not read password");
+
+	if (mode == 'n') {
+		generate_sig_keypair(ident->isk, ident->isk_prv);
+		crypto_from_eddsa_public(ident->ik, ident->isk);
+		crypto_from_eddsa_private(ident->ik_prv, ident->isk_prv);
+	} else {
+		if (load_keys(ident, &p2ptable, "alice.keys", password, password_len))
+			errx(1, "Could not load keys from file `%s'", "alice.keys");
+	}
+
+	/* set up networking */
+	fd = setclientup(host, port);
+	if (fd == -1)
+		err(1, "setclientup");
+	packet_hshake_cprepare(&state.ps, isks, iks,
+		ident->isk, ident->isk_prv,
+		ident->ik, ident->ik_prv,
+		NULL);
+	packet_hshake_chello(&state.ps, buf);
+	safe_write(fd, buf, PACKET_HELLO_SIZE);
+	crypto_wipe(buf, PACKET_HELLO_SIZE);
+
+	/* recv REPLY message */
+	error = safe_read(&nread, fd, buf, PACKET_REPLY_SIZE + 1);
+	if (error)
+		errx(1, "safe_read: %s", error);
+	if (nread < PACKET_REPLY_SIZE)
+		errx(1, "Received invalid reply from server");
+	if (packet_hshake_cfinish(&state.ps, buf))
+		errx(1, "Reply message cannot be decrypted");
+
+	crypto_wipe(buf, PACKET_REPLY_SIZE);
+
+	for (;;) {
+		struct msg_event *ev = NULL;
+
+		/* depending on the state, we need to send a message here, in
+		 * order to prompt the server into DOING something */
+
+		error = safe_read(&nread, fd, buf, BUFSZ);
+		if (error)
+			errx(1, "%s", error);
+		if (nread < PACKET_BUF_SIZE(0))
+			errx(1, "Received message that is too small");
+
+		r = msg_recv(&state, buf, nread);
+		if (r) errx(1, "Could not decrypt message");
+
+		while (msg_next_event(&state, &ev)) {
+			fprintf(stderr, "Received %zu-byte %s/%s (id=%lu)\n",
+				ev->len, msg_proto(ev->proto),
+				msg_type(ev->proto, ev->type), ev->id);
+		}
+
+		while (msg_send(&state, buf, BUFSZ, &len, &desc, &descsize, &desclen)) {
+			error = safe_write(fd, buf, len);
+			if (error)
+				errx(1, "safe_write: %s", error);
+			printf("-> %zu\t%.*s\n", len, (int)desclen, desc);
+			desclen = 0;
+			*desc = 0;
+		}
+	}
+}

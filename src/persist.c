@@ -164,6 +164,20 @@ hash_password(uint8_t key[32], const uint8_t salt[16], const char *password, siz
 }
 
 int
+persist_loadbytes_ref(const uint8_t **buf, size_t size, const uint8_t **pbuf, size_t *psize)
+{
+	if (*psize < size)
+		return -1;
+
+	*buf = *pbuf;
+
+	*pbuf += size;
+	*psize -= size;
+
+	return 0;
+}
+
+int
 persist_loadbytes(uint8_t *buf, size_t size, const uint8_t **pbuf, size_t *psize)
 {
 	if (*psize < size)
@@ -232,24 +246,59 @@ persist_load64_le(uint64_t *n, const uint8_t **pbuf, size_t *psize)
 }
 
 int
+persist_loadstr_ref(const uint8_t **pstr, uint32_t *plen, const uint8_t **pbuf, size_t *psize)
+{
+	const uint8_t *buf, *str;
+	uint32_t len;
+	size_t size;
+	int result;
+
+	buf = *pbuf;
+	size = *psize;
+
+	/* result is an unused variable in release mode (asserts disabled) */
+	(void)result;
+	if (persist_load32_le(&len, &buf, &size)) return -1;
+	if (*psize < len) return -1;
+
+	result = persist_loadbytes_ref(&str, len, &buf, &size);
+	assert(result == 0);
+	if (str[len] != '\0') return -1;
+
+	*pbuf = buf;
+	*psize = size;
+	*pstr = str;
+	if (plen)
+		*plen = len;
+	return 0;
+}
+
+int
 persist_loadstr(uint8_t **pstr, uint32_t *plen, const uint8_t **pbuf, size_t *psize)
 {
 	uint32_t len;
 	int result;
 	char *str;
+	const uint8_t *buf;
+	size_t size;
+
+	buf = *pbuf;
+	size = *psize;
 
 	/* result is an unused variable in release mode (asserts disabled) */
 	(void)result;
-	if (persist_load32_le(&len, pbuf, psize)) return -1;
+	if (persist_load32_le(&len, &buf, &size)) return -1;
 	if (*psize < len) return -1;
 
 	str = malloc(len + 1);
 	if (!str) return -1;
 
-	result = persist_loadbytes(str, len, pbuf, psize);
+	result = persist_loadbytes(str, len, &buf, &size);
 	assert(result == 0);
 	str[len] = '\0';
 
+	*pbuf = buf;
+	*psize = size;
 	*pstr = str;
 	if (plen)
 		*plen = len;

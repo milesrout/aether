@@ -166,11 +166,12 @@ print_table(struct userkv *table, int print_opks)
 		arrlen = stbds_arrlen(el->value.letterbox);
 		for (j = 0; j < arrlen; j++) {
 			displaykey_short("sender", el->value.letterbox[j].isk, 32);
-			displaykey("message", el->value.letterbox[j].data, el->value.letterbox[j].size);
+			displaykey("the message", el->value.letterbox[j].data, el->value.letterbox[j].size);
 		}
 	}
 }
 
+/*
 static
 const char *
 send_packet_to(struct peer *peer, int fd, uint8_t *buf, size_t size)
@@ -178,8 +179,8 @@ send_packet_to(struct peer *peer, int fd, uint8_t *buf, size_t size)
 	uint8_t *text = PACKET_TEXT(buf);
 	const char *error;
 	uint8_t proto = text[0], type = text[1];
-	const char *protosz = msg_proto(proto);
-	const char *typesz = msg_type(proto, type);
+	const char *proto_str = msg_proto(proto);
+	const char *type_str = msg_type(proto, type);
 
 	packet_lock(&peer->state.ps, buf, size);
 	error = safe_sendto(fd, buf, PACKET_BUF_SIZE(size),
@@ -187,177 +188,195 @@ send_packet_to(struct peer *peer, int fd, uint8_t *buf, size_t size)
 	crypto_wipe(buf, PACKET_BUF_SIZE(size));
 
 	printf("-> %zu\t%s:%s\t%d/%d\t%s/%s\n", PACKET_BUF_SIZE(size),
-		peer->host, peer->service, proto, type, protosz, typesz);
+		peer->host, peer->service, proto, type, proto_str, type_str);
 
 	return error;
 }
+*/
 
 static
-const char *
-handle_register(struct handler_ctx *hctx, struct qmsg *qmsg)
+int
+parse_register(const uint8_t **pname, uint8_t *pnamelen,
+		const uint8_t *text, size_t size)
 {
-	uint8_t *text = PACKET_TEXT(qmsg->buf);
-	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
-	size_t size = PACKET_TEXT_SIZE(qmsg->size);
-	struct peer *peer = hctx->peer;
+	if (persist_load8(pnamelen, &text, &size)) return -1;
+	if (persist_loadbytes_ref(pname, *pnamelen, &text, &size)) return -1;
+
+	return 0;
+}
+
+static
+int
+userdb_register(struct handler_ctx *hctx, struct peer *peer,
+		const uint8_t *name)
+{
 	struct server_ctx *ctx = hctx->ctx;
-	struct ident_register_msg *msg = (struct ident_register_msg *)text;
-	struct key isk;
 	struct userinfo ui = {0};
 	struct userkv *kv;
-	uint8_t failure = 1;
-
-	if (size < IDENT_REGISTER_MSG_BASE_SIZE)
-		goto reply;
-
-	if (size < IDENT_REGISTER_MSG_SIZE(msg->username_len))
-		goto reply;
-
-	if (msg->username[msg->username_len] != '\0')
-		goto reply;
+	struct key isk;
 
 	packet_get_iskc(isk.data, &peer->state.ps);
-	if (kv = stbds_hmgetp_null(ctx->table, isk)) {
-		if (!strcmp(kv->value.username, (const char *)msg->username))
-			failure = 0;
-		goto reply;
-	}
+	if (kv = stbds_hmgetp_null(ctx->table, isk))
+		return -1;
 
-	if (stbds_shgetp_null(ctx->namestable, msg->username))
-		goto reply;
+	if (stbds_shgetp_null(ctx->namestable, (intptr_t)name))
+		return -1;
 
-	failure = 0;
 	crypto_from_eddsa_public(ui.ik, isk.data);
-	stbds_shput(ctx->namestable, msg->username, isk);
+	stbds_shput(ctx->namestable, (intptr_t)name, isk);
 	ui.username = ctx->namestable[stbds_shlen(ctx->namestable) - 1].key;
 	ui.peer = peer;
 	stbds_hmput(ctx->table, isk, ui);
 
-reply:
-	size = ident_register_ack_init(text, text_size, failure);
-	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
+	return 0;
 }
 
 static
-const char *
-handle_spksub(struct handler_ctx *hctx, struct qmsg *qmsg)
+int
+parse_spksub(const uint8_t **spk, const uint8_t **spk_sig,
+		const uint8_t *text, size_t size)
 {
-	uint8_t *text = PACKET_TEXT(qmsg->buf);
-	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
-	size_t size = PACKET_TEXT_SIZE(qmsg->size);
-	struct peer *peer = hctx->peer;
-	struct server_ctx *ctx = hctx->ctx;
-	struct ident_spksub_msg *msg = (struct ident_spksub_msg *)text;
-	struct key isk;
-	struct userkv *kv;
-	uint8_t failure = 1;
+	if (persist_loadbytes_ref(spk,     32, &text, &size)) return -1;
+	if (persist_loadbytes_ref(spk_sig, 64, &text, &size)) return -1;
 
-	if (size < IDENT_SPKSUB_MSG_SIZE)
-		goto reply;
+	return 0;
+}
+
+
+static
+int
+userdb_spksub(struct handler_ctx *hctx, struct peer *peer,
+		const uint8_t spk[32], const uint8_t spk_sig[64])
+{
+	struct server_ctx *ctx = hctx->ctx;
+	struct userkv *kv;
+	struct key isk;
 
 	packet_get_iskc(isk.data, &peer->state.ps);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		goto reply;
+	if (!(kv = stbds_hmgetp_null(ctx->table, isk)))
+		return -1;
 
-	if (check_key(isk.data, "AIBS", msg->spk, msg->spk_sig))
-		goto reply;
+	if (check_key(isk.data, "AIBS", spk, spk_sig))
+		return -1;
 
-	failure = 0;
-	memcpy(kv->value.spk, msg->spk, 32);
-	memcpy(kv->value.spk_sig, msg->spk_sig, 64);
+	memcpy(kv->value.spk,     spk,     32);
+	memcpy(kv->value.spk_sig, spk_sig, 64);
 
-reply:
-	size = ident_spksub_ack_init(text, text_size, failure);
-	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
+	return 0;
 }
 
 static
-const char *
-handle_opkssub(struct handler_ctx *hctx, struct qmsg *qmsg)
+int
+parse_opkssub(const uint8_t **opks, uint8_t *count,
+		const uint8_t *text, size_t size)
 {
-	uint8_t *text = PACKET_TEXT(qmsg->buf);
-	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
-	size_t size = PACKET_TEXT_SIZE(qmsg->size);
-	struct peer *peer = hctx->peer;
+	if (persist_load8(count, &text, &size)) return -1;
+	if (persist_loadbytes_ref(opks, (*count)*32, &text, &size)) return -1;
+
+	return 0;
+}
+
+static
+int
+userdb_opkssub(struct handler_ctx *hctx, struct peer *peer,
+		uint8_t opk_count, const uint8_t *opks)
+{
 	struct server_ctx *ctx = hctx->ctx;
-	struct ident_opkssub_msg *msg = (struct ident_opkssub_msg *)text;
-	struct key isk;
 	struct userkv *kv;
+	struct key key;
 	int i;
-	uint16_t opkcount;
-	uint8_t failure = 1;
 
-	if (size < IDENT_OPKSSUB_MSG_BASE_SIZE)
-		goto reply;
+	packet_get_iskc(key.data, &peer->state.ps);
+	if (!(kv = stbds_hmgetp_null(ctx->table, key)))
+		return -1;
 
-	opkcount = load16_le(msg->opk_count);
-	if (size < IDENT_OPKSSUB_MSG_SIZE(opkcount))
-		goto reply;
-
-	packet_get_iskc(isk.data, &peer->state.ps);
-	if ((kv = stbds_hmgetp_null(ctx->table, isk)) == NULL)
-		goto reply;
-
-	failure = 0;
-
-	stbds_arrsetcap(kv->value.opks, opkcount);
-	for (i = 0; i < opkcount; i++) {
-		struct key opk;
-		memcpy(opk.data, msg->opk[i], 32);
-		stbds_arrput(kv->value.opks, opk);
+	stbds_arrsetcap(kv->value.opks, opk_count);
+	for (i = 0; i < opk_count; i++) {
+		memcpy(key.data, opks + (32 * i), 32);
+		stbds_arrput(kv->value.opks, key);
 	}
 
-reply:
-	size = ident_opkssub_ack_init(text, text_size, failure);
-	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
+	return 0;
 }
 
 static
+int
+parse_lookup(const uint8_t **pname, uint8_t *pnamelen,
+		const uint8_t *text, size_t size)
+{
+	if (persist_load8(pnamelen, &text, &size)) return -1;
+	if (persist_loadbytes_ref(pname, *pnamelen, &text, &size)) return -1;
+
+	return 0;
+}
+
+static
+void
+userdb_lookup(struct handler_ctx *hctx, uint8_t isk[32], const uint8_t *name)
+{
+	struct server_ctx *ctx = hctx->ctx;
+	struct usernamev *v;
+
+	v = stbds_shgetp_null(ctx->namestable, (intptr_t)name);
+	if (v) memcpy(isk, v->value.data, 32);
+	else   memset(isk, '\0', 32);
+}
+
+static
+int
+parse_keyreq(const uint8_t **isk, const uint8_t *text, size_t size)
+{
+	if (persist_loadbytes_ref(isk, 32, &text, &size)) return -1;
+	return 0;
+}
+
+static
+void
+userdb_keyreq(struct handler_ctx *hctx, uint8_t spk[32], uint8_t spk_sig[64],
+		uint8_t opk[32], const uint8_t *isk)
+{
+	struct server_ctx *ctx = hctx->ctx;
+	struct key kisk;
+	struct userkv *kv;
+	struct userinfo blank = {0}, *value = &blank;
+	struct key kopk = {0};
+
+	memcpy(kisk.data, isk, 32);
+	if (!(kv = stbds_hmgetp_null(ctx->table, kisk))) {
+		memset(spk, 0, 32);
+		memset(spk_sig, 0, 64);
+		memset(opk, 0, 32);
+		return;
+	}
+
+	value = &kv->value;
+	memcpy(spk, value->spk, 32);
+	memcpy(spk_sig, value->spk_sig, 64);
+
+	if (stbds_arrlen(value->opks) > 0)
+		kopk = stbds_arrpop(value->opks);
+	else
+		crypto_wipe(kopk.data, 32);
+	memcpy(opk, kopk.data, 32);
+}
+
+/*
+static
 const char *
-handle_lookup(struct handler_ctx *hctx, struct qmsg *qmsg)
+handle_rlookup(struct handler_ctx *hctx, struct qmsg *qmsg)
 {
 	uint8_t *text = PACKET_TEXT(qmsg->buf);
 	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
 	size_t size = PACKET_TEXT_SIZE(qmsg->size);
 	struct peer *peer = hctx->peer;
 	struct server_ctx *ctx = hctx->ctx;
-	struct ident_lookup_msg *msg = (struct ident_lookup_msg *)text;
-	struct key k = {0};
-	uint8_t namelen;
-
-	if (size < IDENT_LOOKUP_MSG_BASE_SIZE)
-		goto reply;
-
-	namelen = msg->username_len;
-	if (size < IDENT_LOOKUP_MSG_SIZE(namelen))
-		goto reply;
-
-	if (msg->username[namelen] != '\0')
-		goto reply;
-
-	k = stbds_shget(ctx->namestable, msg->username);
-
-reply:
-	size = ident_lookup_rep_init(text, text_size, k.data);
-	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
-}
-
-static
-const char *
-handle_reverse_lookup(struct handler_ctx *hctx, struct qmsg *qmsg)
-{
-	uint8_t *text = PACKET_TEXT(qmsg->buf);
-	size_t text_size = PACKET_TEXT_SIZE(BUFSZ);
-	size_t size = PACKET_TEXT_SIZE(qmsg->size);
-	struct peer *peer = hctx->peer;
-	struct server_ctx *ctx = hctx->ctx;
-	struct ident_reverse_lookup_msg *msg = (struct ident_reverse_lookup_msg *)text;
+	struct ident_rlookup_msg *msg = (struct ident_rlookup_msg *)text;
 	struct key isk;
 	struct userkv *kv;
 	char blankusername[] = "";
 	struct userinfo blank = {.username = blankusername}, *value = &blank;
 
-	if (size < IDENT_REVERSE_LOOKUP_MSG_SIZE)
+	if (size < IDENT_RLOOKUP_MSG_SIZE)
 		goto reply;
 
 	memcpy(isk.data, msg->isk, 32);
@@ -367,7 +386,7 @@ handle_reverse_lookup(struct handler_ctx *hctx, struct qmsg *qmsg)
 	value = &kv->value;
 
 reply:
-	size = ident_reverse_lookup_rep_init(text, text_size,
+	size = ident_rlookup_rep_init(text, text_size,
 		value->username);
 	return send_packet_to(peer, ctx->fd, qmsg->buf, size);
 }
@@ -465,7 +484,7 @@ handle_fetch(struct handler_ctx *hctx, struct qmsg *qmsg)
 	struct server_ctx *ctx = hctx->ctx;
 	int msgcount = 0;
 	ptrdiff_t arrlen;
-	/* uint16_t slack; */
+	/1* uint16_t slack; *1/
 	struct key isk;
 	struct userkv *kv;
 	struct stored_message smsg;
@@ -478,10 +497,10 @@ handle_fetch(struct handler_ctx *hctx, struct qmsg *qmsg)
 	if (!(kv = stbds_hmgetp_null(ctx->table, isk)))
 		goto reply;
 
-	/* TODO: set to maximum value that makes total packet size <= 64k */
-	/* slack = 32768; */
+	/1* TODO: set to maximum value that makes total packet size <= 64k *1/
+	/1* slack = 32768; *1/
 
-	/* for now, fetch only 1 message at a time */
+	/1* for now, fetch only 1 message at a time *1/
 	arrlen = stbds_arrlen(kv->value.letterbox);
 	if (arrlen == 0)
 		goto reply;
@@ -580,6 +599,7 @@ reply:
 	repsize = chat_forward_ack_init(text, text_size, result);
 	return send_packet_to(peer, ctx->fd, qmsg->buf, repsize);
 }
+*/
 
 /* TODO: Proof of work - to prevent denial of service:
  * The server should require that the client does some
@@ -693,91 +713,94 @@ handle_hshakes(long unused, void *hctx_void)
 	}
 }
 
-static
-const char *
-handle_packet(struct handler_ctx *ctx, struct peer *peer, struct qmsg *qmsg)
-{
-	uint8_t *buf, *text;
-	size_t size, nread;
-	struct msg *msg;
+/* static */
+/* const char * */
+/* handle_packet(struct handler_ctx *ctx, struct peer *peer, struct qmsg *qmsg) */
+/* { */
+/* 	uint8_t *buf, *text; */
+/* 	size_t size, nread; */
+/* 	struct msg *msg; */
 
-	buf = qmsg->buf;
-	nread = qmsg->size;
-	text = PACKET_TEXT(buf);
-	size = PACKET_TEXT_SIZE(nread);
+/* 	buf = qmsg->buf; */
+/* 	nread = qmsg->size; */
+/* 	text = PACKET_TEXT(buf); */
+/* 	size = PACKET_TEXT_SIZE(nread); */
 
-	if (packet_unlock(&peer->state.ps, buf, nread))
-		return "could not unlock packet";
+/* 	if (packet_unlock(&peer->state.ps, buf, nread)) */
+/* 		return "could not unlock packet"; */
 
-	printf("<- %zu\t", qmsg->size);
-	if (peer_getnameinfo(peer))
-		printf("unknown host and port: ");
-	else
-		printf("%s:%s\t", peer->host, peer->service);
+/* 	printf("<- %zu\t", qmsg->size); */
+/* 	if (peer_getnameinfo(peer)) */
+/* 		printf("unknown host and port: "); */
+/* 	else */
+/* 		printf("%s:%s\t", peer->host, peer->service); */
 
-	if (size >= sizeof(struct msg)) {
-		msg = (struct msg *)text;
-		printf("%d/%d\t%s/%s\n", msg->proto, msg->type,
-			msg_proto(msg->proto), msg_type(msg->proto, msg->type));
-		switch (msg->proto) {
-		case PROTO_MSG:
-			switch (msg->type) {
-			case MSG_ACK:
-				/* record_as_acked(); */
-				return NULL;
-			case MSG_NACK:
-				/* if (we_still_have_it) */
-				/* 	send_it(); */
-				/* else */
-				/* 	dunno(); */
-				return NULL;
-			case MSG_UNACK:
-				/* if (we_have_received_it) */
-				/* 	send_ack(); */
-				/* else */
-				/* 	send_nack(); */
-				return NULL;
-			default:
-				goto error;
-			}
-		case PROTO_IDENT:
-			switch (msg->type) {
-			case IDENT_REGISTER_MSG:
-				return handle_register(ctx, qmsg);
-			case IDENT_SPKSUB_MSG:
-				return handle_spksub(ctx, qmsg);
-			case IDENT_OPKSSUB_MSG:
-				return handle_opkssub(ctx, qmsg);
-			case IDENT_LOOKUP_MSG:
-				return handle_lookup(ctx, qmsg);
-			case IDENT_REVERSE_LOOKUP_MSG:
-				return handle_reverse_lookup(ctx, qmsg);
-			case IDENT_KEYREQ_MSG:
-				return handle_keyreq(ctx, qmsg);
-			default:
-				goto error;
-			}
-		case PROTO_CHAT:
-			switch (msg->type) {
-			case CHAT_GOODBYE_MSG:
-				return handle_goodbye(ctx, qmsg);
-			case CHAT_FETCH_MSG:
-				return handle_fetch(ctx, qmsg);
-			case CHAT_FORWARD_MSG:
-				return handle_forward(ctx, qmsg);
-			default:
-				goto error;
-			}
-		default:
-			goto error;
-		}
-	}
+/* 	if (size >= sizeof(struct msg)) { */
+/* 		msg = (struct msg *)text; */
+/* 		printf("%d/%d\t%s/%s\n", msg->proto, msg->type, */
+/* 			msg_proto(msg->proto), msg_type(msg->proto, msg->type)); */
+/* 		switch (msg->proto) { */
+/* 		case PROTO_MSG: */
+/* 			switch (msg->type) { */
+/* 			case MSG_ACK: */
+/* 				/1* record_as_acked(); *1/ */
+/* 				return NULL; */
+/* 			case MSG_NACK: */
+/* 				/1* if (we_still_have_it) *1/ */
+/* 				/1* 	send_it(); *1/ */
+/* 				/1* else *1/ */
+/* 				/1* 	dunno(); *1/ */
+/* 				return NULL; */
+/* 			case MSG_UNACK: */
+/* 				/1* if (we_have_received_it) *1/ */
+/* 				/1* 	send_ack(); *1/ */
+/* 				/1* else *1/ */
+/* 				/1* 	send_nack(); *1/ */
+/* 				return NULL; */
+/* 			default: */
+/* 				goto error; */
+/* 			} */
+/* 		case PROTO_IDENT: */
+/* 			switch (msg->type) { */
+/* 			case IDENT_REGISTER_MSG: */
+/* 				return handle_register(ctx, qmsg); */
+/* 			case IDENT_SPKSUB_MSG: */
+/* 				return handle_spksub(ctx, qmsg); */
+/* 			case IDENT_OPKSSUB_MSG: */
+/* 				return handle_opkssub(ctx, qmsg); */
+/* 			case IDENT_LOOKUP_MSG: */
+/* 				return handle_lookup(ctx, qmsg); */
+/* 			case IDENT_RLOOKUP_MSG: */
+/* 				return handle_rlookup(ctx, qmsg); */
+/* 			case IDENT_KEYREQ_MSG: */
+/* 				return handle_keyreq(ctx, qmsg); */
+/* 			default: */
+/* 				goto error; */
+/* 			} */
+/* 		case PROTO_CHAT: */
+/* 			switch (msg->type) { */
+/* 			case CHAT_GOODBYE_MSG: */
+/* 				return handle_goodbye(ctx, qmsg); */
+/* 			case CHAT_FETCH_MSG: */
+/* 				return handle_fetch(ctx, qmsg); */
+/* 			case CHAT_FORWARD_MSG: */
+/* 				return handle_forward(ctx, qmsg); */
+/* 			default: */
+/* 				goto error; */
+/* 			} */
+/* 		default: */
+/* 			goto error; */
+/* 		} */
+/* 	} */
 
-error:
-	printf("UNKNOWN\n");
-	return handle_unknown(ctx, qmsg);
-}
-
+/* error: */
+/* 	printf("UNKNOWN\n"); */
+/* 	return handle_unknown(ctx, qmsg); */
+/* } */
+int
+ident_register_ack(struct msg_state *state, uint64_t id, int result);
+int
+ident_spksub_ack(struct msg_state *state, uint64_t id, int result);
 
 static
 void
@@ -786,18 +809,142 @@ handle_peer(long sctx_long, void *peer_void)
 	struct server_ctx *sctx = (void *)sctx_long;
 	struct peer *peer = peer_void;
 	struct handler_ctx ctx = {sctx, peer};
-	const char *error;
-	struct qmsg *qmsg;
-	uint64_t events;
-	ssize_t n;
+	size_t len, descsize, desclen;
+	uint8_t buf[BUFSZ];
+	char *desc = NULL;
 	
 	for (;;) {
+		struct qmsg *qmsg;
+		uint64_t events;
+		ssize_t n;
+
 		while (!ctx.should_quit && (qmsg = STAILQ_FIRST(&peer->recvq))) {
+			struct msg_event *ev = NULL;
+			int r;
+
 			STAILQ_REMOVE_HEAD(&peer->recvq, q);
-			error = handle_packet(&ctx, peer, qmsg);
-			crypto_wipe(qmsg->buf, BUFSZ);
+
+			printf("<- %zu\t", qmsg->size);
+			if (peer_getnameinfo(peer))
+				printf("unknown host and port: ");
+			else
+				printf("%s:%s\t", peer->host, peer->service);
+
+			r = msg_recv(&peer->state, qmsg->buf, qmsg->size);
+			if (r) errx(1, "msg_recv");
+
+			while (msg_next_event(&peer->state, &ev)) {
+				struct msg_buf *msgbuf = NULL;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
+
+				/* fprintf(stderr, "handling event: %d\n", ev->type); */
+				if (ev->proto == PROTO_IDENT) {
+					switch (ev->type) {
+					case IDENT_REGISTER_MSG: {
+						const uint8_t *name;
+						uint8_t namelen;
+						if (parse_register(&name, &namelen, ev->text, ev->len))
+							continue;
+						r = userdb_register(&ctx, peer, name);
+						msgbuf = malloc(sizeof *msgbuf);
+						if (!msgbuf) err(1, "out of memory");
+						n = ident_register_ack_init(msgbuf->buf, MSG_BUFSZ,
+							0, ev->id, !!r);
+						if (n == -1) errx(1, "logical error");
+						msgbuf->len = n;
+						STAILQ_INSERT_TAIL(&peer->state.sendq, msgbuf, bufq);
+						break;
+					}
+					case IDENT_SPKSUB_MSG: {
+						const uint8_t *spk, *spk_sig;
+						if (parse_spksub(&spk, &spk_sig, ev->text, ev->len))
+							continue;
+						r = userdb_spksub(&ctx, peer, spk, spk_sig);
+						msgbuf = malloc(sizeof *msgbuf);
+						if (!msgbuf) err(1, "out of memory");
+						n = ident_spksub_ack_init(msgbuf->buf, MSG_BUFSZ,
+							0, ev->id, !!r);
+						if (n == -1) errx(1, "logical error");
+						msgbuf->len = n;
+						STAILQ_INSERT_TAIL(&peer->state.sendq, msgbuf, bufq);
+						break;
+					}
+					case IDENT_OPKSSUB_MSG: {
+						const uint8_t *opks;
+						uint8_t opk_count;
+						if (parse_opkssub(&opks, &opk_count, ev->text, ev->len))
+							continue;
+						r = userdb_opkssub(&ctx, peer, opk_count, opks);
+						msgbuf = malloc(sizeof *msgbuf);
+						if (!msgbuf) err(1, "out of memory");
+						n = ident_opkssub_ack_init(msgbuf->buf, MSG_BUFSZ,
+							0, ev->id, !!r);
+						if (n == -1) errx(1, "logical error");
+						msgbuf->len = n;
+						STAILQ_INSERT_TAIL(&peer->state.sendq, msgbuf, bufq);
+						break;
+					}
+					case IDENT_LOOKUP_MSG: {
+						const uint8_t *name;
+						uint8_t namelen;
+						uint8_t isk[32];
+						if (parse_lookup(&name, &namelen, ev->text, ev->len))
+							continue;
+						userdb_lookup(&ctx, isk, name);
+						msgbuf = malloc(sizeof *msgbuf);
+						if (!msgbuf) err(1, "out of memory");
+						n = ident_lookup_rep_init(msgbuf->buf, MSG_BUFSZ,
+							0, ev->id, isk);
+						if (n == -1) errx(1, "logical error");
+						msgbuf->len = n;
+						STAILQ_INSERT_TAIL(&peer->state.sendq, msgbuf, bufq);
+						break;
+					}
+					case IDENT_KEYREQ_MSG: {
+						const uint8_t *isk;
+						uint8_t spk[32], spk_sig[64], opk[32];
+						if (parse_keyreq(&isk, ev->text, ev->len))
+							continue;
+						userdb_keyreq(&ctx, spk, spk_sig, opk, isk);
+						msgbuf = malloc(sizeof *msgbuf);
+						if (!msgbuf) err(1, "out of memory");
+						n = ident_keyreq_rep_init(msgbuf->buf, MSG_BUFSZ,
+							0, ev->id, spk, spk_sig, opk);
+						if (n == -1) errx(1, "logical error");
+						msgbuf->len = n;
+						STAILQ_INSERT_TAIL(&peer->state.sendq, msgbuf, bufq);
+						break;
+					}
+					default:
+						fprintf(stderr, "fail!\n");
+						break;
+					}
+				}
+				free(ev);
+#pragma GCC diagnostic pop
+			}
+
+			while (msg_send(&peer->state, buf, BUFSZ, &len, &desc, &descsize, &desclen)) {
+				const char *error;
+
+				error = safe_sendto(sctx->fd, buf, len,
+					(struct sockaddr *)&peer->addr, peer->addr_len);
+				crypto_wipe(buf, len);
+				printf("-> %zu\t%s:%s\t\t%.*s\n", len,
+					peer->host, peer->service, (int)desclen, desc);
+				*desc = 0;
+				desclen = 0;
+
+				if (error)
+					err(1, "safe_sendto: %s", error);
+			}
+
+			/* error = handle_packet(&ctx, peer, qmsg); */
+			/* crypto_wipe(qmsg->buf, BUFSZ); */
+
 			STAILQ_INSERT_HEAD(&ctx.ctx->spares, qmsg, q);
-			if (error) err(1, "handle_packet: %s", error);
 		}
 
 		if (ctx.should_quit) {
@@ -866,7 +1013,6 @@ handle_datagram(int fd, struct hshake_ctx *hctx)
 	error = safe_recvfrom(&qmsg->size, fd, qmsg->buf, BUFSZ,
 		(struct sockaddr *)&pi.addr, &pi.addr_len);
 	if (error) return error;
-
 
 	peer = peer_getbyaddr(&hctx->ctx->peertable,
 		(struct sockaddr *)&pi.addr, pi.addr_len);
@@ -1007,6 +1153,17 @@ handler_thread(long fd, void *ctx_void)
 
 }
 
+__attribute__((noreturn))
+static
+void
+usage_D(const char *errmsg, int ret)
+{
+	if (errmsg)
+		fprintf(stderr, "%s: %s:", __progname, errmsg);
+	fprintf(stderr, "usage: %s -D [-b HOST] [-p PORT]\n", __progname);
+	exit(ret);
+}
+
 static
 const char *
 serve(char **argv, int subopt)
@@ -1026,22 +1183,12 @@ serve(char **argv, int subopt)
 
 	host = "127.0.0.1";
 	port = "3443";
-	while ((option = optparse(&options, "p:h:")) != -1) {
+	while ((option = optparse(&options, "hb:p:")) != -1) {
 		switch (option) {
-		case 'h':
-			host = options.optarg;
-			break;
-		case 'p':
-			port = options.optarg;
-			break;
-		default:
-			if (options.errmsg)
-				fprintf(stderr, "%s: %s",
-					__progname, options.errmsg);
-			fprintf(stderr, "usage: %s -D [-h HOST] [-p PORT]\n",
-				__progname);
-			exit(1);
-			break;
+		case 'b': host = options.optarg; break;
+		case 'p': port = options.optarg; break;
+		case 'h': usage_D(NULL, 0);
+		default:  usage_D(options.errmsg, 1);
 		}
 	}
 
@@ -1099,6 +1246,7 @@ serve(char **argv, int subopt)
 	if (hctx.eventfd == -1)
 		return errnowrap("eventfd");
 
+	fprintf(stderr, "fibre_go(FP_LOW, interval_timer_thread)\n");
 	fibre_go(FP_LOW, interval_timer_thread, 10, NULL);
 
 	/* this is safe, because serve()'s stack frame will live forever.
@@ -1106,10 +1254,14 @@ serve(char **argv, int subopt)
 	 * as fibre_go arguments unless they are somehow arranged to be yielded
 	 * to before the function calling fibre_go returns.
 	 */
-	fibre_go(FP_HIGH, user_input_thread, 0, &ctx);
+	fprintf(stderr, "fibre_go(FP_LOW, user_input_thread)\n");
+	fibre_go(FP_NORMAL, user_input_thread, 0, &ctx);
+	fprintf(stderr, "fibre_go(FP_LOW, handler_thread)\n");
 	fibre_go(FP_NORMAL, handler_thread, fd, &hctx);
+	fprintf(stderr, "fibre_go(FP_LOW, handle_hshakes)\n");
 	fibre_go(FP_LOW, handle_hshakes, 0, &hctx);
 
+	fprintf(stderr, "calling fibre_return()\n");
 	fibre_return();
 
 	exit(0);
@@ -1281,15 +1433,35 @@ persist(char **argv, int subopt)
 	exit(0);
 }
 
+char *sgetdelim(FILE *f, size_t *len, int delim,
+		char *stack, size_t stacksz,
+		char **heap, size_t *heapsz);
+static
+void
+test_sgetdelim(void)
+{
+	size_t len = 0, size = 0;
+	char buf[8] = {0};
+	char *p = NULL, *str = NULL;
+
+	for (;;) {
+		fprintf(stderr, "PRE  %zu %zu s=%p[%.*s] h=%p[%s] r=%p[%s]\n",
+			len, size, buf, 8, buf, p, p, str, str);
+		str = sgetdelim(stdin, &len, '\n', buf, 8, &p, &size);
+		fprintf(stderr, "POST %zu %zu s=%p[%.*s] h=%p[%s] r=%p[%s]\n",
+			len, size, buf, 8, buf, p, p, str, str);
+	}
+}
+
 static
 void
 version(void)
 {
+	test_sgetdelim();
+
 	fprintf(stderr, "aether version master\n");
 	exit(0);
 }
-
-#define OPTIONS "hABDFKPRV"
 
 void
 usage(const char *errmsg, int ret)
